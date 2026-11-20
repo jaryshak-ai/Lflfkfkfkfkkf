@@ -1,0 +1,3408 @@
+name: Build Duel plugin
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Java 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Create project files
+        run: |
+          set -e
+          mkdir -p src/main/java/ru/eclips/duel src/main/resources
+          cat > pom.xml <<'EOF_DUEL_00'
+          <?xml version="1.0" encoding="UTF-8"?>
+          <project xmlns="http://maven.apache.org/POM/4.0.0"
+                   xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+                   xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 http://maven.apache.org/xsd/maven-4.0.0.xsd">
+              <modelVersion>4.0.0</modelVersion>
+
+              <groupId>ru.eclips</groupId>
+              <artifactId>duel</artifactId>
+              <version>1.0.0</version>
+              <packaging>jar</packaging>
+
+              <properties>
+                  <maven.compiler.source>17</maven.compiler.source>
+                  <maven.compiler.target>17</maven.compiler.target>
+                  <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+                  <nukkit.group>com.nukkit-mot</nukkit.group>
+                  <nukkit.artifact>nukkit-mot</nukkit.artifact>
+                  <nukkit.version>1.26.50-R1</nukkit.version>
+              </properties>
+
+              <repositories>
+                  <repository>
+                      <id>repo-lanink-cn</id>
+                      <url>https://repo.lanink.cn/repository/maven-public/</url>
+                  </repository>
+              </repositories>
+
+              <dependencies>
+                  <dependency>
+                      <groupId>${nukkit.group}</groupId>
+                      <artifactId>${nukkit.artifact}</artifactId>
+                      <version>${nukkit.version}</version>
+                      <scope>provided</scope>
+                  </dependency>
+              </dependencies>
+
+              <build>
+                  <finalName>Duel</finalName>
+                  <plugins>
+                      <plugin>
+                          <groupId>org.apache.maven.plugins</groupId>
+                          <artifactId>maven-compiler-plugin</artifactId>
+                          <version>3.11.0</version>
+                          <configuration>
+                              <release>17</release>
+                              <encoding>UTF-8</encoding>
+                          </configuration>
+                      </plugin>
+                  </plugins>
+              </build>
+          </project>
+          EOF_DUEL_00
+          cat > src/main/resources/plugin.yml <<'EOF_DUEL_01'
+          name: Duel
+          main: ru.eclips.duel.DuelPlugin
+          version: "1.0.0"
+          api: ["1.0.0"]
+          author: Eclips
+          description: Дуэли команда на команду от 1x1 до 5x5 с картами, сетами и статистикой
+          commands:
+            duel:
+              description: Меню дуэлей
+              usage: /duel
+              permission: duel.use
+            aduel:
+              description: Админ-меню дуэлей
+              usage: /aduel
+              permission: duel.admin
+          permissions:
+            duel.use:
+              description: Пользоваться дуэлями
+              default: true
+            duel.admin:
+              description: Управление картами дуэлей
+              default: op
+          EOF_DUEL_01
+          cat > src/main/resources/config.yml <<'EOF_DUEL_02'
+          # ===== Duel: настройки дуэлей =====
+          # Карты, сеты и точки задаются в игре через /aduel (хранятся в maps.yml).
+          # Статистика хранится в stats.yml. Вещи игроков на время дуэли лежат в папке saved/.
+
+          # Сколько секунд после создания дуэли ждём игроков. Потом старт с тем, кто есть
+          # (команды могут быть неравными, например 5 на 1). Если соперников нет, дуэль отменяется.
+          lobby-wait-seconds: 70
+
+          # Сколько секунд игроки стоят на спавнах перед боем.
+          countdown-seconds: 12
+
+          # Максимальная длительность боя в секундах (потом ничья).
+          match-time-seconds: 600
+
+          # Максимальный размер команды (ползунок 1x1 ... NxN). От 2 до 5.
+          max-team-size: 5
+
+          # Граница дуэли вокруг общей точки карты.
+          border:
+            # Сколько блоков можно отойти в стороны (по X и Z).
+            radius: 20
+            # Сколько блоков можно подняться вверх.
+            up: 15
+            # Сколько блоков можно опуститься вниз.
+            down: 30
+            # Если игрок ушёл за границу на столько блоков, его телепортирует на спавн.
+            teleport-back-excess: 10
+
+          build:
+            # Строить можно до этой высоты над общей точкой включительно (10 можно, 11 нельзя).
+            max-height: 10
+            # Блоки, которые ставить нельзя (часть названия блока, без учёта регистра).
+            forbidden-blocks: [tnt, lava, fire, sand, gravel, powder, anvil, dragon egg]
+
+          # Предметы, которыми нельзя пользоваться на арене (часть названия).
+          forbidden-items: [flint, fire charge, tnt, lava]
+
+          # Блоки, с которыми нельзя взаимодействовать на арене (сундуки, печи и т.д.).
+          blocked-interact-blocks: [chest, furnace, barrel, hopper, dropper, dispenser, shulker, anvil, enchant, brewing, beacon, smoker, blast, loom, grindstone]
+
+          # Команды, разрешённые во время дуэли. Все остальные (телепорты, /gm, /fly и др.) блокируются.
+          allowed-commands: [duel]
+
+          password:
+            min-length: 3
+            max-length: 16
+
+          teams:
+            red-name: "Красные"
+            blue-name: "Синие"
+            # Цвета ников на время дуэли.
+            red-color: "§c"
+            blue-color: "§9"
+
+          # Как часто (в секундах) статистика сохраняется на диск.
+          stats-save-seconds: 30
+          EOF_DUEL_02
+          cat > src/main/java/ru/eclips/duel/DuelListener.java <<'EOF_DUEL_03'
+          package ru.eclips.duel;
+
+          import cn.nukkit.Player;
+          import cn.nukkit.block.Block;
+          import cn.nukkit.entity.Entity;
+          import cn.nukkit.event.EventHandler;
+          import cn.nukkit.event.EventPriority;
+          import cn.nukkit.event.Listener;
+          import cn.nukkit.event.block.BlockBreakEvent;
+          import cn.nukkit.event.block.BlockPlaceEvent;
+          import cn.nukkit.event.entity.EntityDamageByEntityEvent;
+          import cn.nukkit.event.entity.EntityDamageEvent;
+          import cn.nukkit.event.entity.EntityExplodeEvent;
+          import cn.nukkit.event.player.PlayerBucketEmptyEvent;
+          import cn.nukkit.event.player.PlayerBucketFillEvent;
+          import cn.nukkit.event.player.PlayerCommandPreprocessEvent;
+          import cn.nukkit.event.player.PlayerDeathEvent;
+          import cn.nukkit.event.player.PlayerDropItemEvent;
+          import cn.nukkit.event.player.PlayerFormRespondedEvent;
+          import cn.nukkit.event.player.PlayerInteractEvent;
+          import cn.nukkit.event.player.PlayerJoinEvent;
+          import cn.nukkit.event.player.PlayerMoveEvent;
+          import cn.nukkit.event.player.PlayerQuitEvent;
+          import cn.nukkit.event.player.PlayerRespawnEvent;
+          import cn.nukkit.event.player.PlayerTeleportEvent;
+          import cn.nukkit.item.Item;
+          import cn.nukkit.level.Location;
+
+          import java.util.ArrayList;
+          import java.util.HashMap;
+          import java.util.Locale;
+          import java.util.Map;
+          import java.util.UUID;
+
+          /** События: защита арены, смерть без дропа, границы, блокировки команд и телепортов. */
+          public final class DuelListener implements Listener {
+              private final DuelPlugin plugin;
+              private final Map<UUID, Long> lastWarn = new HashMap<>();
+
+              public DuelListener(DuelPlugin plugin) {
+                  this.plugin = plugin;
+              }
+
+              private Match of(Player p) {
+                  return plugin.manager.matchOf(p.getUniqueId());
+              }
+
+              private static boolean hasAny(String text, java.util.List<String> parts) {
+                  if (text == null) {
+                      return false;
+                  }
+                  String t = text.toLowerCase(Locale.ROOT);
+                  for (String s : parts) {
+                      if (t.contains(s)) {
+                          return true;
+                      }
+                  }
+                  return false;
+              }
+
+              private void warn(Player p, String msg) {
+                  long now = System.currentTimeMillis();
+                  Long last = lastWarn.get(p.getUniqueId());
+                  if (last == null || now - last > 1500) {
+                      lastWarn.put(p.getUniqueId(), now);
+                      p.sendMessage(msg);
+                  }
+              }
+
+              // ---------------- вход / выход ----------------
+
+              @EventHandler(priority = EventPriority.NORMAL)
+              public void onJoin(PlayerJoinEvent e) {
+                  final Player p = e.getPlayer();
+                  plugin.later(() -> plugin.restorePending(p), 20);
+              }
+
+              @EventHandler(priority = EventPriority.MONITOR)
+              public void onQuit(PlayerQuitEvent e) {
+                  Player p = e.getPlayer();
+                  plugin.forms.forget(p.getUniqueId());
+                  lastWarn.remove(p.getUniqueId());
+                  Match m = of(p);
+                  if (m != null) {
+                      try {
+                          m.leave(p, true);
+                      } catch (Throwable t) {
+                          plugin.getLogger().warning("Duel quit error: " + t);
+                      }
+                  }
+              }
+
+              @EventHandler(priority = EventPriority.NORMAL)
+              public void onForm(PlayerFormRespondedEvent e) {
+                  plugin.forms.onResponse(e);
+              }
+
+              // ---------------- движение и границы ----------------
+
+              @EventHandler(priority = EventPriority.HIGH)
+              public void onMove(PlayerMoveEvent e) {
+                  Player p = e.getPlayer();
+                  Match m = of(p);
+                  if (m == null) {
+                      return;
+                  }
+                  Location f = e.getFrom();
+                  Location t = e.getTo();
+                  if (f == null || t == null) {
+                      return;
+                  }
+                  Match.Member mb = m.member(p.getUniqueId());
+                  if (mb != null && mb.frozen) {
+                      if (f.getX() != t.getX() || f.getZ() != t.getZ() || t.getY() > f.getY() + 0.05) {
+                          e.setCancelled(true);
+                      }
+                      return;
+                  }
+                  Settings s = plugin.settings;
+                  double ef = m.map.excess(s, f.getX(), f.getY(), f.getZ());
+                  double et = m.map.excess(s, t.getX(), t.getY(), t.getZ());
+                  if (et > 0 && et > ef) {
+                      e.setCancelled(true);
+                      warn(p, Msg.err("Вы вышли за пределы дуэли."));
+                  }
+              }
+
+              @EventHandler(priority = EventPriority.HIGH)
+              public void onTeleport(PlayerTeleportEvent e) {
+                  Player p = e.getPlayer();
+                  Match m = of(p);
+                  if (m == null || plugin.isTpAllowed(p.getUniqueId())) {
+                      return;
+                  }
+                  String cause = "";
+                  try {
+                      cause = e.getCause() == null ? "" : e.getCause().name();
+                  } catch (Throwable ignored) {
+                  }
+                  Location to = e.getTo();
+                  if ((cause.equals("ENDER_PEARL") || cause.equals("CHORUS_FRUIT")) && to != null && to.getLevel() == p.getLevel()
+                          && m.map.excess(plugin.settings, to.getX(), to.getY(), to.getZ()) <= 0) {
+                      return;
+                  }
+                  e.setCancelled(true);
+              }
+
+              @EventHandler(priority = EventPriority.HIGH)
+              public void onCommand(PlayerCommandPreprocessEvent e) {
+                  Player p = e.getPlayer();
+                  if (of(p) == null) {
+                      return;
+                  }
+                  String msg = e.getMessage();
+                  if (msg == null || !msg.startsWith("/")) {
+                      return;
+                  }
+                  String cmd = msg.substring(1).trim().split("\\s+")[0].toLowerCase(Locale.ROOT);
+                  int colon = cmd.indexOf(':');
+                  if (colon >= 0) {
+                      cmd = cmd.substring(colon + 1);
+                  }
+                  if (plugin.settings.allowedCommands.contains(cmd)) {
+                      return;
+                  }
+                  e.setCancelled(true);
+                  p.sendMessage(Msg.err("Во время дуэли команды отключены. Выйти можно через /duel."));
+              }
+
+              // ---------------- урон и смерть ----------------
+
+              @EventHandler(priority = EventPriority.HIGH)
+              public void onDamage(EntityDamageEvent e) {
+                  Entity ent = e.getEntity();
+                  if (!(ent instanceof Player)) {
+                      return;
+                  }
+                  Player v = (Player) ent;
+                  Match m = of(v);
+                  if (m == null) {
+                      if (e instanceof EntityDamageByEntityEvent) {
+                          Entity d = ((EntityDamageByEntityEvent) e).getDamager();
+                          if (d instanceof Player && of((Player) d) != null) {
+                              e.setCancelled(true);
+                          }
+                      }
+                      return;
+                  }
+                  Match.Member vm = m.member(v.getUniqueId());
+                  if (m.state != Match.State.RUNNING || vm == null || !vm.alive) {
+                      e.setCancelled(true);
+                      return;
+                  }
+                  Player killer = null;
+                  if (e instanceof EntityDamageByEntityEvent) {
+                      Entity d = ((EntityDamageByEntityEvent) e).getDamager();
+                      if (d instanceof Player) {
+                          Player dp = (Player) d;
+                          Match dm = of(dp);
+                          Match.Member dmem = dm == null ? null : dm.member(dp.getUniqueId());
+                          if (dm != m || dmem == null || !dmem.alive || dmem.team == vm.team) {
+                              e.setCancelled(true);
+                              return;
+                          }
+                          killer = dp;
+                      }
+                  }
+                  if (e.getFinalDamage() >= v.getHealth()) {
+                      e.setCancelled(true);
+                      m.onDeath(v, killer);
+                  }
+              }
+
+              @EventHandler(priority = EventPriority.HIGHEST)
+              public void onDeath(PlayerDeathEvent e) {
+                  final Player v = e.getEntity();
+                  final Match m = of(v);
+                  if (m == null) {
+                      return;
+                  }
+                  e.setKeepInventory(true);
+                  e.setKeepExperience(true);
+                  e.setDrops(new Item[0]);
+                  Refl.run(e, "setDeathMessage", "");
+                  Match.Member mb = m.member(v.getUniqueId());
+                  if (mb != null) {
+                      mb.deathPending = true;
+                      try {
+                          EntityDamageEvent c = v.getLastDamageCause();
+                          if (c instanceof EntityDamageByEntityEvent) {
+                              Entity d = ((EntityDamageByEntityEvent) c).getDamager();
+                              if (d instanceof Player) {
+                                  mb.pendingKiller = ((Player) d).getUniqueId();
+                              }
+                          }
+                      } catch (Throwable ignored) {
+                      }
+                  }
+              }
+
+              @EventHandler(priority = EventPriority.HIGHEST)
+              public void onRespawn(PlayerRespawnEvent e) {
+                  final Player p = e.getPlayer();
+                  final Match m = of(p);
+                  if (m == null) {
+                      return;
+                  }
+                  final Match.Member mb = m.member(p.getUniqueId());
+                  if (mb == null || !mb.deathPending) {
+                      return;
+                  }
+                  try {
+                      Location l = plugin.loc(m.map.lobby, 0, 0);
+                      if (l != null) {
+                          e.setRespawnPosition(l);
+                      }
+                  } catch (Throwable ignored) {
+                  }
+                  plugin.later(() -> {
+                      Match cur = of(p);
+                      if (cur == m && p.isOnline()) {
+                          Player killer = mb.pendingKiller == null ? null : plugin.online(mb.pendingKiller);
+                          m.onDeath(p, killer);
+                      }
+                  }, 2);
+              }
+
+              // ---------------- предметы и блоки ----------------
+
+              @EventHandler(priority = EventPriority.HIGH)
+              public void onDrop(PlayerDropItemEvent e) {
+                  if (of(e.getPlayer()) != null) {
+                      e.setCancelled(true);
+                  }
+              }
+
+              @EventHandler(priority = EventPriority.HIGH)
+              public void onInteract(PlayerInteractEvent e) {
+                  Player p = e.getPlayer();
+                  Match m = of(p);
+                  if (m == null) {
+                      return;
+                  }
+                  Item it = e.getItem();
+                  String action = "";
+                  try {
+                      action = e.getAction() == null ? "" : e.getAction().name();
+                  } catch (Throwable ignored) {
+                  }
+                  if (m.state == Match.State.WAITING && Util.isCompass(it)) {
+                      e.setCancelled(true);
+                      if (action.startsWith("RIGHT_CLICK") && !plugin.forms.hasPending(p.getUniqueId())) {
+                          plugin.forms.openTeam(p, m);
+                      }
+                      return;
+                  }
+                  Match.Member mb = m.member(p.getUniqueId());
+                  if (m.state != Match.State.RUNNING || mb == null || !mb.alive) {
+                      e.setCancelled(true);
+                      return;
+                  }
+                  if (it != null && !it.isNull() && hasAny(it.getName(), plugin.settings.forbiddenItems)) {
+                      e.setCancelled(true);
+                      return;
+                  }
+                  Block b = e.getBlock();
+                  if (b != null && action.equals("RIGHT_CLICK_BLOCK") && hasAny(b.getName(), plugin.settings.interactBlocks)) {
+                      e.setCancelled(true);
+                  }
+              }
+
+              @EventHandler(priority = EventPriority.HIGH)
+              public void onPlace(BlockPlaceEvent e) {
+                  Player p = e.getPlayer();
+                  Match m = of(p);
+                  if (m == null) {
+                      return;
+                  }
+                  Match.Member mb = m.member(p.getUniqueId());
+                  if (m.state != Match.State.RUNNING || mb == null || !mb.alive) {
+                      e.setCancelled(true);
+                      return;
+                  }
+                  Block b = e.getBlock();
+                  if (hasAny(b.getName(), plugin.settings.forbiddenBlocks)) {
+                      e.setCancelled(true);
+                      warn(p, Msg.err("Этот блок нельзя ставить на арене."));
+                      return;
+                  }
+                  if (!m.map.canBuild(plugin.settings, b.getFloorX(), b.getFloorY(), b.getFloorZ())) {
+                      e.setCancelled(true);
+                      warn(p, Msg.err("Здесь строить нельзя: слишком далеко или слишком высоко."));
+                  }
+              }
+
+              @EventHandler(priority = EventPriority.MONITOR)
+              public void onPlaceDone(BlockPlaceEvent e) {
+                  Match m = of(e.getPlayer());
+                  if (m != null && !e.isCancelled()) {
+                      Block b = e.getBlock();
+                      m.markPlaced(b.getFloorX(), b.getFloorY(), b.getFloorZ());
+                  }
+              }
+
+              @EventHandler(priority = EventPriority.HIGH)
+              public void onBreak(BlockBreakEvent e) {
+                  Player p = e.getPlayer();
+                  Match m = of(p);
+                  if (m == null) {
+                      return;
+                  }
+                  Match.Member mb = m.member(p.getUniqueId());
+                  Block b = e.getBlock();
+                  if (m.state != Match.State.RUNNING || mb == null || !mb.alive
+                          || !m.isPlaced(b.getFloorX(), b.getFloorY(), b.getFloorZ())) {
+                      e.setCancelled(true);
+                      return;
+                  }
+                  e.setDrops(new Item[0]);
+              }
+
+              @EventHandler(priority = EventPriority.MONITOR)
+              public void onBreakDone(BlockBreakEvent e) {
+                  Match m = of(e.getPlayer());
+                  if (m != null && !e.isCancelled()) {
+                      Block b = e.getBlock();
+                      m.unmarkPlaced(b.getFloorX(), b.getFloorY(), b.getFloorZ());
+                  }
+              }
+
+              @EventHandler(priority = EventPriority.HIGH)
+              public void onBucketEmpty(PlayerBucketEmptyEvent e) {
+                  if (of(e.getPlayer()) != null) {
+                      e.setCancelled(true);
+                  }
+              }
+
+              @EventHandler(priority = EventPriority.HIGH)
+              public void onBucketFill(PlayerBucketFillEvent e) {
+                  if (of(e.getPlayer()) != null) {
+                      e.setCancelled(true);
+                  }
+              }
+
+              /** Взрывы на арене урон наносят, но блоки не ломают. */
+              @EventHandler(priority = EventPriority.HIGH)
+              public void onExplode(EntityExplodeEvent e) {
+                  try {
+                      Entity ent = e.getEntity();
+                      if (ent == null || ent.getLevel() == null) {
+                          return;
+                      }
+                      String lvl = ent.getLevel().getFolderName();
+                      for (Match m : plugin.manager.all()) {
+                          if (m.map.lobby != null && m.map.lobby.level.equals(lvl)
+                                  && m.map.excess(plugin.settings, ent.getX(), ent.getY(), ent.getZ()) <= 0) {
+                              e.setBlockList(new ArrayList<Block>());
+                              return;
+                          }
+                      }
+                  } catch (Throwable ignored) {
+                  }
+              }
+          }
+          EOF_DUEL_03
+          cat > src/main/java/ru/eclips/duel/DuelManager.java <<'EOF_DUEL_04'
+          package ru.eclips.duel;
+
+          import cn.nukkit.Player;
+
+          import java.util.ArrayList;
+          import java.util.HashMap;
+          import java.util.LinkedHashMap;
+          import java.util.List;
+          import java.util.Map;
+          import java.util.UUID;
+
+          /** Реестр дуэлей: на одну карту одна дуэль за раз. */
+          public final class DuelManager {
+              private final DuelPlugin plugin;
+              private final Map<String, Match> byMap = new LinkedHashMap<>();
+              private final Map<UUID, Match> byPlayer = new HashMap<>();
+
+              public DuelManager(DuelPlugin plugin) {
+                  this.plugin = plugin;
+              }
+
+              public Match matchOf(UUID id) {
+                  return byPlayer.get(id);
+              }
+
+              public boolean isBusy(String mapName) {
+                  return byMap.containsKey(mapName.toLowerCase());
+              }
+
+              public List<Match> all() {
+                  return new ArrayList<>(byMap.values());
+              }
+
+              public List<Match> waiting() {
+                  List<Match> out = new ArrayList<>();
+                  for (Match m : byMap.values()) {
+                      if (m.state == Match.State.WAITING && !m.isFull()) {
+                          out.add(m);
+                      }
+                  }
+                  return out;
+              }
+
+              void bind(Match m, UUID id) {
+                  byPlayer.put(id, m);
+              }
+
+              void unbind(UUID id) {
+                  byPlayer.remove(id);
+              }
+
+              void unregister(Match m) {
+                  byMap.remove(m.map.name.toLowerCase());
+                  for (UUID id : new ArrayList<>(byPlayer.keySet())) {
+                      if (byPlayer.get(id) == m) {
+                          byPlayer.remove(id);
+                      }
+                  }
+              }
+
+              /** Общие условия входа в дуэль. Возвращает текст причины или null. */
+              public String cannotEnter(Player p) {
+                  if (byPlayer.containsKey(p.getUniqueId())) {
+                      return "Ты уже участвуешь в дуэли.";
+                  }
+                  try {
+                      if (p.getGamemode() != 0) {
+                          return "Для дуэли нужен режим выживания.";
+                      }
+                      if (p.getHealth() <= 0) {
+                          return "Сейчас нельзя войти в дуэль.";
+                      }
+                  } catch (Throwable ignored) {
+                  }
+                  return null;
+              }
+
+              public Match create(Player p, DuelMap map, int size, String password) {
+                  String why = cannotEnter(p);
+                  if (why != null) {
+                      p.sendMessage(Msg.err(why));
+                      return null;
+                  }
+                  if (!map.isReady(plugin.settings)) {
+                      p.sendMessage(Msg.err("Эта карта сейчас недоступна."));
+                      return null;
+                  }
+                  if (isBusy(map.name)) {
+                      p.sendMessage(Msg.err("Эта карта уже занята другой дуэлью."));
+                      return null;
+                  }
+                  Match m = new Match(plugin, map, p.getName(), size, password);
+                  byMap.put(map.name.toLowerCase(), m);
+                  if (!m.addPlayer(p)) {
+                      byMap.remove(map.name.toLowerCase());
+                      return null;
+                  }
+                  return m;
+              }
+
+              public boolean join(Player p, Match m) {
+                  String why = cannotEnter(p);
+                  if (why != null) {
+                      p.sendMessage(Msg.err(why));
+                      return false;
+                  }
+                  if (m.state != Match.State.WAITING || m.isFull()) {
+                      p.sendMessage(Msg.err("В эту дуэль уже нельзя войти."));
+                      return false;
+                  }
+                  return m.addPlayer(p);
+              }
+
+              public void tick() {
+                  for (Match m : all()) {
+                      try {
+                          m.tick();
+                      } catch (Throwable t) {
+                          plugin.getLogger().warning("Duel tick error: " + t);
+                          try {
+                              m.finish(null, "Дуэль прервана из-за внутренней ошибки.");
+                          } catch (Throwable ignored) {
+                          }
+                      }
+                  }
+              }
+
+              public void endAll(String reason) {
+                  for (Match m : all()) {
+                      try {
+                          m.finish(null, reason);
+                      } catch (Throwable ignored) {
+                      }
+                  }
+              }
+          }
+          EOF_DUEL_04
+          cat > src/main/java/ru/eclips/duel/DuelMap.java <<'EOF_DUEL_05'
+          package ru.eclips.duel;
+
+          import cn.nukkit.Player;
+          import cn.nukkit.inventory.PlayerInventory;
+          import cn.nukkit.item.Item;
+          import cn.nukkit.level.Location;
+
+          import java.util.LinkedHashMap;
+          import java.util.Map;
+
+          /** Карта дуэли: общая точка (лобби), спавны команд, сет, граница. */
+          public final class DuelMap {
+              /** Точка в мире. */
+              public static final class Pt {
+                  public final String level;
+                  public final double x;
+                  public final double y;
+                  public final double z;
+                  public final double yaw;
+                  public final double pitch;
+
+                  public Pt(String level, double x, double y, double z, double yaw, double pitch) {
+                      this.level = level;
+                      this.x = x;
+                      this.y = y;
+                      this.z = z;
+                      this.yaw = yaw;
+                      this.pitch = pitch;
+                  }
+
+                  public static Pt of(Player p) {
+                      Location l = p.getLocation();
+                      return new Pt(p.getLevel().getFolderName(), l.getX(), l.getY(), l.getZ(), l.getYaw(), l.getPitch());
+                  }
+
+                  public String serialize() {
+                      return level + "|" + x + "|" + y + "|" + z + "|" + yaw + "|" + pitch;
+                  }
+
+                  public static Pt parse(String s) {
+                      if (s == null || s.isEmpty()) {
+                          return null;
+                      }
+                      try {
+                          String[] a = s.split("\\|");
+                          return new Pt(a[0], Double.parseDouble(a[1]), Double.parseDouble(a[2]), Double.parseDouble(a[3]),
+                                  Double.parseDouble(a[4]), Double.parseDouble(a[5]));
+                      } catch (Throwable t) {
+                          return null;
+                      }
+                  }
+              }
+
+              public final String name;
+              public boolean enabled = true;
+              public Pt lobby;
+              public Pt red;
+              public Pt blue;
+              /** Ключи: i0..i35 (слоты), a0..a3 (шлем, нагрудник, поножи, ботинки), o_hand (вторая рука). */
+              public final Map<String, String> kit = new LinkedHashMap<>();
+
+              public DuelMap(String name) {
+                  this.name = name;
+              }
+
+              public boolean hasKit() {
+                  return !kit.isEmpty();
+              }
+
+              public int kitItems() {
+                  int n = 0;
+                  for (String k : kit.keySet()) {
+                      if (k.startsWith("i")) {
+                          n++;
+                      }
+                  }
+                  return n;
+              }
+
+              public int kitArmor() {
+                  int n = 0;
+                  for (String k : kit.keySet()) {
+                      if (k.startsWith("a")) {
+                          n++;
+                      }
+                  }
+                  return n;
+              }
+
+              /** Насколько точка вышла за границу (0 = внутри). */
+              public double excess(Settings s, double x, double y, double z) {
+                  if (lobby == null) {
+                      return 0;
+                  }
+                  double ex = Math.max(Math.abs(x - lobby.x), Math.abs(z - lobby.z)) - s.radius;
+                  double ey = Math.max(y - lobby.y - s.up, lobby.y - s.down - y);
+                  return Math.max(0, Math.max(ex, ey));
+              }
+
+              /** Можно ли поставить блок в этой клетке (до buildHeight блоков выше общей точки включительно). */
+              public boolean canBuild(Settings s, int bx, int by, int bz) {
+                  if (lobby == null) {
+                      return false;
+                  }
+                  if (Math.abs(bx + 0.5 - lobby.x) > s.radius || Math.abs(bz + 0.5 - lobby.z) > s.radius) {
+                      return false;
+                  }
+                  int baseY = (int) Math.floor(lobby.y);
+                  return by <= baseY + s.buildHeight && by >= baseY - s.down;
+              }
+
+              /** Текст проблемы или null, если карта готова к играм. */
+              public String problem(Settings s) {
+                  if (lobby == null) {
+                      return "не задана общая точка (лобби)";
+                  }
+                  if (red == null) {
+                      return "не задан спавн красных";
+                  }
+                  if (blue == null) {
+                      return "не задан спавн синих";
+                  }
+                  if (!lobby.level.equals(red.level) || !lobby.level.equals(blue.level)) {
+                      return "точки находятся в разных мирах";
+                  }
+                  if (excess(s, red.x, red.y, red.z) > 0) {
+                      return "спавн красных вне границы";
+                  }
+                  if (excess(s, blue.x, blue.y, blue.z) > 0) {
+                      return "спавн синих вне границы";
+                  }
+                  if (!hasKit()) {
+                      return "не задан сет";
+                  }
+                  return null;
+              }
+
+              public boolean isReady(Settings s) {
+                  return enabled && problem(s) == null;
+              }
+
+              /** Сет = текущий инвентарь админа: положение вещей сохраняется точно. */
+              public int setKitFrom(Player p) {
+                  Map<String, String> n = new LinkedHashMap<>();
+                  PlayerInventory inv = p.getInventory();
+                  int size = inv.getSize();
+                  for (int i = 0; i < size; i++) {
+                      String e = ItemCodec.encode(inv.getItem(i));
+                      if (!e.isEmpty()) {
+                          n.put("i" + i, e);
+                      }
+                  }
+                  String[] a = {
+                          ItemCodec.encode(inv.getHelmet()), ItemCodec.encode(inv.getChestplate()),
+                          ItemCodec.encode(inv.getLeggings()), ItemCodec.encode(inv.getBoots())
+                  };
+                  for (int i = 0; i < 4; i++) {
+                      if (!a[i].isEmpty()) {
+                          n.put("a" + i, a[i]);
+                      }
+                  }
+                  String off = ItemCodec.encode(Util.getOffhand(p));
+                  if (!off.isEmpty()) {
+                      n.put("o_hand", off);
+                  }
+                  kit.clear();
+                  kit.putAll(n);
+                  return n.size();
+              }
+
+              public void giveKit(Player p) {
+                  PlayerInventory inv = p.getInventory();
+                  try {
+                      inv.clearAll();
+                  } catch (Throwable ignored) {
+                  }
+                  Util.setOffhand(p, null);
+                  for (Map.Entry<String, String> e : kit.entrySet()) {
+                      try {
+                          String k = e.getKey();
+                          Item it = ItemCodec.decode(e.getValue());
+                          if (it == null) {
+                              continue;
+                          }
+                          if (k.equals("a0")) {
+                              inv.setHelmet(it);
+                          } else if (k.equals("a1")) {
+                              inv.setChestplate(it);
+                          } else if (k.equals("a2")) {
+                              inv.setLeggings(it);
+                          } else if (k.equals("a3")) {
+                              inv.setBoots(it);
+                          } else if (k.equals("o_hand")) {
+                              Util.setOffhand(p, it);
+                          } else if (k.startsWith("i")) {
+                              inv.setItem(Integer.parseInt(k.substring(1)), it);
+                          }
+                      } catch (Throwable ignored) {
+                      }
+                  }
+                  try {
+                      inv.sendContents(p);
+                      inv.sendArmorContents(p);
+                  } catch (Throwable ignored) {
+                  }
+              }
+          }
+          EOF_DUEL_05
+          cat > src/main/java/ru/eclips/duel/DuelPlugin.java <<'EOF_DUEL_06'
+          package ru.eclips.duel;
+
+          import cn.nukkit.Player;
+          import cn.nukkit.command.Command;
+          import cn.nukkit.command.CommandSender;
+          import cn.nukkit.level.Level;
+          import cn.nukkit.level.Location;
+          import cn.nukkit.level.Position;
+          import cn.nukkit.plugin.PluginBase;
+
+          import java.io.File;
+          import java.util.Set;
+          import java.util.UUID;
+          import java.util.concurrent.ConcurrentHashMap;
+
+          /** Дуэли: /duel (игроки) и /aduel (админ). */
+          public class DuelPlugin extends PluginBase {
+              public final Settings settings = new Settings();
+              public MapStore maps;
+              public StatsStore stats;
+              public DuelManager manager;
+              public FormUI forms;
+              public File savedDir;
+              private final Set<UUID> tpAllowed = ConcurrentHashMap.newKeySet();
+
+              @Override
+              public void onEnable() {
+                  saveDefaultConfig();
+                  settings.load(getConfig());
+                  savedDir = new File(getDataFolder(), "saved");
+                  savedDir.mkdirs();
+                  maps = new MapStore(new File(getDataFolder(), "maps.yml"));
+                  stats = new StatsStore(new File(getDataFolder(), "stats.yml"));
+                  manager = new DuelManager(this);
+                  forms = new FormUI(this);
+                  getServer().getPluginManager().registerEvents(new DuelListener(this), this);
+
+                  repeat(() -> manager.tick(), 20);
+                  repeat(() -> stats.flush(true), Math.max(5, settings.statsFlush) * 20);
+
+                  // после /reload или рестарта возвращаем вещи всем, кто был на арене
+                  for (Player p : getServer().getOnlinePlayers().values()) {
+                      restorePending(p);
+                  }
+                  getLogger().info("Duel включён. Карт: " + maps.all().size());
+              }
+
+              @Override
+              public void onDisable() {
+                  try {
+                      manager.endAll("Сервер выключается, дуэль завершена.");
+                  } catch (Throwable ignored) {
+                  }
+                  try {
+                      stats.flush(false);
+                  } catch (Throwable ignored) {
+                  }
+              }
+
+              public void reloadAll() {
+                  try {
+                      reloadConfig();
+                      settings.load(getConfig());
+                  } catch (Throwable ignored) {
+                  }
+                  maps.load();
+              }
+
+              // ---------------- планировщик ----------------
+
+              public void later(Runnable r, int ticks) {
+                  Util.RunTask t = new Util.RunTask(this, r);
+                  Object sch = getServer().getScheduler();
+                  if (!Refl.run(sch, "scheduleDelayedTask", t, ticks)) {
+                      Refl.run(sch, "scheduleDelayedTask", this, t, ticks);
+                  }
+              }
+
+              private void repeat(Runnable r, int period) {
+                  Util.RunTask t = new Util.RunTask(this, r);
+                  Object sch = getServer().getScheduler();
+                  if (!Refl.run(sch, "scheduleRepeatingTask", t, period)) {
+                      Refl.run(sch, "scheduleRepeatingTask", this, t, period);
+                  }
+              }
+
+              // ---------------- помощники ----------------
+
+              public Player online(UUID id) {
+                  return getServer().getOnlinePlayers().get(id);
+              }
+
+              public Level getLevel(String name) {
+                  if (name == null || name.isEmpty()) {
+                      return null;
+                  }
+                  Level lv = getServer().getLevelByName(name);
+                  if (lv == null) {
+                      try {
+                          getServer().loadLevel(name);
+                      } catch (Throwable ignored) {
+                      }
+                      lv = getServer().getLevelByName(name);
+                  }
+                  return lv;
+              }
+
+              public Location loc(DuelMap.Pt pt, double dx, double dz) {
+                  if (pt == null) {
+                      return null;
+                  }
+                  Level lv = getLevel(pt.level);
+                  if (lv == null) {
+                      return null;
+                  }
+                  return new Location(pt.x + dx, pt.y, pt.z + dz, pt.yaw, pt.pitch, lv);
+              }
+
+              /** Телепорт плагина: другие плагины во время дуэли телепортировать игрока не могут. */
+              public boolean teleport(Player p, Location l) {
+                  tpAllowed.add(p.getUniqueId());
+                  try {
+                      return p.teleport(l);
+                  } catch (Throwable t) {
+                      return false;
+                  } finally {
+                      tpAllowed.remove(p.getUniqueId());
+                  }
+              }
+
+              public boolean isTpAllowed(UUID id) {
+                  return tpAllowed.contains(id);
+              }
+
+              /** Если после краша остался файл с вещами, возвращаем их игроку. */
+              public void restorePending(Player p) {
+                  try {
+                      if (p == null || !p.isOnline() || manager.matchOf(p.getUniqueId()) != null) {
+                          return;
+                      }
+                      File f = PlayerState.file(savedDir, p.getUniqueId());
+                      if (!f.isFile()) {
+                          return;
+                      }
+                      PlayerState st = PlayerState.read(f);
+                      if (st == null) {
+                          getLogger().warning("Не удалось прочитать сохранение " + f.getName());
+                          return;
+                      }
+                      if (st.restore(this, p)) {
+                          PlayerState.delete(savedDir, p.getUniqueId());
+                          p.sendMessage(Msg.info("Твои вещи после дуэли возвращены."));
+                      }
+                  } catch (Throwable t) {
+                      getLogger().warning("restorePending: " + t);
+                  }
+              }
+
+              // ---------------- команды ----------------
+
+              @Override
+              public boolean onCommand(CommandSender sender, Command command, String label, String[] args) {
+                  String n = command.getName().toLowerCase();
+                  if (!(sender instanceof Player)) {
+                      sender.sendMessage("Команда доступна только игрокам в игре.");
+                      return true;
+                  }
+                  Player p = (Player) sender;
+                  if (n.equals("duel")) {
+                      if (args.length > 0 && args[0].equalsIgnoreCase("leave")) {
+                          Match m = manager.matchOf(p.getUniqueId());
+                          if (m != null) {
+                              m.leave(p, false);
+                          }
+                          return true;
+                      }
+                      forms.openMain(p);
+                      return true;
+                  }
+                  if (n.equals("aduel")) {
+                      if (!p.isOp() && !p.hasPermission("duel.admin")) {
+                          p.sendMessage(Msg.err("Нет прав."));
+                          return true;
+                      }
+                      forms.openAdmin(p);
+                      return true;
+                  }
+                  return false;
+              }
+          }
+          EOF_DUEL_06
+          cat > src/main/java/ru/eclips/duel/FormUI.java <<'EOF_DUEL_07'
+          package ru.eclips.duel;
+
+          import cn.nukkit.Player;
+          import cn.nukkit.event.player.PlayerFormRespondedEvent;
+          import cn.nukkit.form.element.ElementButton;
+          import cn.nukkit.form.element.ElementInput;
+          import cn.nukkit.form.element.ElementSlider;
+          import cn.nukkit.form.element.ElementToggle;
+          import cn.nukkit.form.response.FormResponseCustom;
+          import cn.nukkit.form.response.FormResponseModal;
+          import cn.nukkit.form.response.FormResponseSimple;
+          import cn.nukkit.form.window.FormWindow;
+          import cn.nukkit.form.window.FormWindowCustom;
+          import cn.nukkit.form.window.FormWindowSimple;
+
+          import java.util.ArrayList;
+          import java.util.HashMap;
+          import java.util.List;
+          import java.util.Map;
+          import java.util.UUID;
+          import java.util.concurrent.ConcurrentHashMap;
+
+          /** Все графические меню /duel и /aduel. Кнопки жирные и тёмные: читаются на серых кнопках. */
+          public final class FormUI {
+              public interface Handler {
+                  void handle(Player p, Object response, boolean closed);
+              }
+
+              private static final class Pending {
+                  final int id;
+                  final Handler h;
+
+                  Pending(int id, Handler h) {
+                      this.id = id;
+                      this.h = h;
+                  }
+              }
+
+              private final DuelPlugin plugin;
+              private final Map<UUID, Pending> pending = new ConcurrentHashMap<>();
+
+              public FormUI(DuelPlugin plugin) {
+                  this.plugin = plugin;
+              }
+
+              // ---------------- ядро ----------------
+
+              public void open(Player p, FormWindow w, Handler h) {
+                  try {
+                      int id = p.showFormWindow(w);
+                      pending.put(p.getUniqueId(), new Pending(id, h));
+                  } catch (Throwable ignored) {
+                  }
+              }
+
+              public void forget(UUID id) {
+                  pending.remove(id);
+              }
+
+              public boolean hasPending(UUID id) {
+                  return pending.containsKey(id);
+              }
+
+              public void onResponse(PlayerFormRespondedEvent e) {
+                  Player p = e.getPlayer();
+                  Pending pd = pending.get(p.getUniqueId());
+                  if (pd == null || pd.id != e.getFormID()) {
+                      return;
+                  }
+                  pending.remove(p.getUniqueId());
+                  boolean closed = e.wasClosed();
+                  try {
+                      pd.h.handle(p, closed ? null : e.getResponse(), closed);
+                  } catch (Throwable t) {
+                      plugin.getLogger().warning("Form handler error: " + t);
+                  }
+              }
+
+              private static int clicked(Object r) {
+                  if (r instanceof FormResponseSimple) {
+                      return ((FormResponseSimple) r).getClickedButtonId();
+                  }
+                  if (r instanceof FormResponseModal) {
+                      return ((FormResponseModal) r).getClickedButtonId();
+                  }
+                  return -1;
+              }
+
+              private static Map<Integer, Object> answers(Object r) {
+                  Map<Integer, Object> out = new HashMap<>();
+                  if (r instanceof FormResponseCustom) {
+                      Map<Integer, Object> m = ((FormResponseCustom) r).getResponses();
+                      if (m != null) {
+                          out.putAll(m);
+                      }
+                  }
+                  return out;
+              }
+
+              private static ElementButton button(String text) {
+                  return new ElementButton(Msg.btn(text));
+              }
+
+              private static ElementButton button2(String a, String b) {
+                  return new ElementButton(Msg.btn2(a, b));
+              }
+
+              /** Простое окно с одной кнопкой. */
+              public void info(Player p, String title, String body, Runnable after) {
+                  FormWindowSimple f = new FormWindowSimple(title, body);
+                  f.addButton(button("Назад"));
+                  open(p, f, (pl, r, closed) -> {
+                      if (!closed && after != null) {
+                          after.run();
+                      }
+                  });
+              }
+
+              /** Окно подтверждения: Да / Нет. */
+              private void confirm(Player p, String title, String body, Runnable yes, Runnable no) {
+                  FormWindowSimple f = new FormWindowSimple(title, body);
+                  f.addButton(button("Да"));
+                  f.addButton(button("Нет"));
+                  open(p, f, (pl, r, closed) -> {
+                      if (closed) {
+                          return;
+                      }
+                      if (clicked(r) == 0) {
+                          if (yes != null) {
+                              yes.run();
+                          }
+                      } else if (no != null) {
+                          no.run();
+                      }
+                  });
+              }
+
+              // ---------------- меню игрока ----------------
+
+              public void openMain(Player p) {
+                  Match mt = plugin.manager.matchOf(p.getUniqueId());
+                  if (mt != null) {
+                      openInMatch(p, mt);
+                      return;
+                  }
+                  FormWindowSimple f = new FormWindowSimple("Дуэли", "Выбери действие:");
+                  f.addButton(button("Создать дуэль"));
+                  f.addButton(button("Присоединиться к дуэли"));
+                  f.addButton(button("Моя статистика"));
+                  f.addButton(button("Топ 10 игроков"));
+                  open(p, f, (pl, r, closed) -> {
+                      if (closed) {
+                          return;
+                      }
+                      switch (clicked(r)) {
+                          case 0:
+                              openCreateMaps(pl);
+                              break;
+                          case 1:
+                              openJoinList(pl);
+                              break;
+                          case 2:
+                              openStats(pl);
+                              break;
+                          case 3:
+                              openTop(pl);
+                              break;
+                          default:
+                              break;
+                      }
+                  });
+              }
+
+              private void openInMatch(Player p, Match mt) {
+                  String state;
+                  switch (mt.state) {
+                      case WAITING:
+                          state = "ожидание игроков";
+                          break;
+                      case COUNTDOWN:
+                          state = "подготовка к бою";
+                          break;
+                      default:
+                          state = "бой идёт";
+                          break;
+                  }
+                  FormWindowSimple f = new FormWindowSimple("Дуэль", "Карта: " + mt.map.name + " (" + mt.size + "x" + mt.size + ")\n"
+                          + "Состояние: " + state + "\nИгроков: " + mt.count() + "/" + (mt.size * 2));
+                  f.addButton(button("Покинуть дуэль"));
+                  f.addButton(button("Закрыть"));
+                  open(p, f, (pl, r, closed) -> {
+                      if (closed || clicked(r) != 0) {
+                          return;
+                      }
+                      String warn = mt.state == Match.State.RUNNING
+                              ? "Выход во время боя засчитывается как поражение. Вещи вернутся. Выйти?"
+                              : "Ты выйдешь из дуэли, вещи вернутся. Выйти?";
+                      confirm(pl, "Покинуть дуэль", warn, () -> {
+                          Match cur = plugin.manager.matchOf(pl.getUniqueId());
+                          if (cur != null) {
+                              cur.leave(pl, false);
+                          }
+                      }, null);
+                  });
+              }
+
+              // ---- создание ----
+
+              private void openCreateMaps(Player p) {
+                  String why = plugin.manager.cannotEnter(p);
+                  if (why != null) {
+                      info(p, "Дуэли", why, () -> openMain(p));
+                      return;
+                  }
+                  List<DuelMap> ready = new ArrayList<>();
+                  for (DuelMap m : plugin.maps.all()) {
+                      if (m.isReady(plugin.settings)) {
+                          ready.add(m);
+                      }
+                  }
+                  if (ready.isEmpty()) {
+                      info(p, "Создать дуэль", "Пока нет готовых карт для дуэлей.", () -> openMain(p));
+                      return;
+                  }
+                  FormWindowSimple f = new FormWindowSimple("Создать дуэль", "Выбери карту:");
+                  for (DuelMap m : ready) {
+                      f.addButton(button2(m.name, plugin.manager.isBusy(m.name) ? "занята" : "свободна"));
+                  }
+                  f.addButton(button("Назад"));
+                  open(p, f, (pl, r, closed) -> {
+                      if (closed) {
+                          return;
+                      }
+                      int i = clicked(r);
+                      if (i < 0 || i >= ready.size()) {
+                          openMain(pl);
+                          return;
+                      }
+                      DuelMap m = ready.get(i);
+                      if (plugin.manager.isBusy(m.name)) {
+                          info(pl, "Создать дуэль", "Эта карта сейчас занята. Выбери другую.", () -> openCreateMaps(pl));
+                          return;
+                      }
+                      openCreateSettings(pl, m, 1, false, "");
+                  });
+              }
+
+              private void openCreateSettings(Player p, DuelMap map, int defSize, boolean defClosed, String defPw) {
+                  int max = plugin.settings.maxTeam;
+                  int pwMin = plugin.settings.pwMin;
+                  int pwMax = plugin.settings.pwMax;
+                  FormWindowCustom f = new FormWindowCustom("Дуэль: " + map.name);
+                  f.addElement(new ElementSlider("Размер дуэли: игроков в каждой команде (от 1x1 до " + max + "x" + max + ")", 1, max, 1,
+                          Math.max(1, Math.min(defSize, max))));
+                  f.addElement(new ElementToggle("Закрытая арена (вход только по паролю)", defClosed));
+                  f.addElement(new ElementInput("Пароль (если арена закрытая)", "от " + pwMin + " до " + pwMax + " символов", defPw));
+                  open(p, f, (pl, r, closed) -> {
+                      if (closed) {
+                          return;
+                      }
+                      Map<Integer, Object> a = answers(r);
+                      int size = a.get(0) instanceof Number ? Math.round(((Number) a.get(0)).floatValue()) : 1;
+                      size = Math.max(1, Math.min(size, max));
+                      boolean priv = Boolean.TRUE.equals(a.get(1));
+                      String pw = a.get(2) == null ? "" : String.valueOf(a.get(2)).trim();
+                      if (priv && (pw.length() < pwMin || pw.length() > pwMax || pw.contains(" "))) {
+                          final int fs = size;
+                          final String fpw = pw;
+                          info(pl, "Пароль", "Пароль должен быть от " + pwMin + " до " + pwMax + " символов, без пробелов.",
+                                  () -> openCreateSettings(pl, map, fs, true, fpw));
+                          return;
+                      }
+                      plugin.manager.create(pl, map, size, priv ? pw : null);
+                  });
+              }
+
+              // ---- присоединение ----
+
+              private void openJoinList(Player p) {
+                  String why = plugin.manager.cannotEnter(p);
+                  if (why != null) {
+                      info(p, "Дуэли", why, () -> openMain(p));
+                      return;
+                  }
+                  List<Match> list = plugin.manager.waiting();
+                  if (list.isEmpty()) {
+                      info(p, "Присоединиться", "Сейчас нет открытых дуэлей. Создай свою!", () -> openMain(p));
+                      return;
+                  }
+                  FormWindowSimple f = new FormWindowSimple("Присоединиться", "Выбери дуэль:");
+                  for (Match m : list) {
+                      f.addButton(button2(m.map.name + "  " + m.size + "x" + m.size + (m.hasPassword() ? "  [пароль]" : ""),
+                              "Создал: " + m.creator + "  Игроков: " + m.count() + "/" + (m.size * 2)));
+                  }
+                  f.addButton(button("Назад"));
+                  open(p, f, (pl, r, closed) -> {
+                      if (closed) {
+                          return;
+                      }
+                      int i = clicked(r);
+                      if (i < 0 || i >= list.size()) {
+                          openMain(pl);
+                          return;
+                      }
+                      Match m = list.get(i);
+                      if (m.state != Match.State.WAITING || m.isFull()) {
+                          info(pl, "Присоединиться", "В эту дуэль уже нельзя войти.", () -> openJoinList(pl));
+                          return;
+                      }
+                      if (m.hasPassword()) {
+                          openPassword(pl, m);
+                      } else {
+                          plugin.manager.join(pl, m);
+                      }
+                  });
+              }
+
+              private void openPassword(Player p, Match m) {
+                  FormWindowCustom f = new FormWindowCustom("Закрытая арена");
+                  f.addElement(new ElementInput("Введи пароль арены", "пароль", ""));
+                  open(p, f, (pl, r, closed) -> {
+                      if (closed) {
+                          return;
+                      }
+                      Object o = answers(r).get(0);
+                      String pw = o == null ? "" : String.valueOf(o).trim();
+                      if (!pw.equals(m.password)) {
+                          info(pl, "Закрытая арена", "Неверный пароль.", () -> openJoinList(pl));
+                          return;
+                      }
+                      plugin.manager.join(pl, m);
+                  });
+              }
+
+              // ---- статистика ----
+
+              private void openStats(Player p) {
+                  StatsStore.Row r = plugin.stats.get(p.getUniqueId());
+                  int games = r.wins + r.losses;
+                  String rate = games == 0 ? "0%" : Math.round(r.wins * 100.0 / games) + "%";
+                  String body = "Победы: " + r.wins + "\nПоражения: " + r.losses + "\nПроцент побед: " + rate + "\nУбийства: " + r.kills
+                          + "\nСмерти: " + r.deaths + "\nК/Д: " + r.kdText();
+                  info(p, "Моя статистика", body, () -> openMain(p));
+              }
+
+              private void openTop(Player p) {
+                  List<StatsStore.Row> top = plugin.stats.top(10);
+                  StringBuilder sb = new StringBuilder();
+                  if (top.isEmpty()) {
+                      sb.append("Пока никто не побеждал.");
+                  }
+                  int i = 1;
+                  for (StatsStore.Row r : top) {
+                      sb.append(i++).append(". ").append(r.name).append("  побед: ").append(r.wins).append("  К/Д: ")
+                              .append(r.kdText()).append(" (").append(r.kills).append("/").append(r.deaths).append(")\n");
+                  }
+                  info(p, "Топ 10 по победам", sb.toString(), () -> openMain(p));
+              }
+
+              // ---- выбор команды (компас) ----
+
+              public void openTeam(Player p, Match mt) {
+                  Match.Member mb = mt.member(p.getUniqueId());
+                  if (mb == null || mt.state != Match.State.WAITING) {
+                      return;
+                  }
+                  if (mb.team != null) {
+                      p.sendMessage(Msg.err("Команда уже выбрана, менять её нельзя."));
+                      return;
+                  }
+                  FormWindowSimple f = new FormWindowSimple("Выбор команды",
+                          "Команду потом поменять нельзя. Если не выберешь до старта, команда назначится сама.");
+                  f.addButton(button2(plugin.settings.redName, mt.teamCount(Match.Team.RED) + "/" + mt.size));
+                  f.addButton(button2(plugin.settings.blueName, mt.teamCount(Match.Team.BLUE) + "/" + mt.size));
+                  f.addButton(button("Закрыть"));
+                  open(p, f, (pl, r, closed) -> {
+                      if (closed) {
+                          return;
+                      }
+                      int i = clicked(r);
+                      if (i == 0) {
+                          mt.chooseTeam(pl, Match.Team.RED);
+                      } else if (i == 1) {
+                          mt.chooseTeam(pl, Match.Team.BLUE);
+                      }
+                  });
+              }
+
+              // ---------------- меню админа ----------------
+
+              public void openAdmin(Player p) {
+                  FormWindowSimple f = new FormWindowSimple("Админ: дуэли", "Управление картами и дуэлями.");
+                  f.addButton(button("Создать карту"));
+                  f.addButton(button("Список карт"));
+                  f.addButton(button("Активные дуэли"));
+                  f.addButton(button("Перезагрузить конфиг"));
+                  open(p, f, (pl, r, closed) -> {
+                      if (closed) {
+                          return;
+                      }
+                      switch (clicked(r)) {
+                          case 0:
+                              openMapCreate(pl);
+                              break;
+                          case 1:
+                              openMapList(pl);
+                              break;
+                          case 2:
+                              openActive(pl);
+                              break;
+                          case 3:
+                              plugin.reloadAll();
+                              info(pl, "Админ: дуэли", "Конфиг и карты перезагружены.", () -> openAdmin(pl));
+                              break;
+                          default:
+                              break;
+                      }
+                  });
+              }
+
+              private void openMapCreate(Player p) {
+                  FormWindowCustom f = new FormWindowCustom("Новая карта");
+                  f.addElement(new ElementInput("Название карты (буквы, цифры, _ и -)", "например arena1", ""));
+                  open(p, f, (pl, r, closed) -> {
+                      if (closed) {
+                          return;
+                      }
+                      Object o = answers(r).get(0);
+                      String name = o == null ? "" : String.valueOf(o).trim();
+                      if (!name.matches("[\\p{L}0-9_\\-]{2,24}") || !name.matches(".*\\p{L}.*")) {
+                          info(pl, "Новая карта", "Название: 2-24 символа, буквы, цифры, _ и -, хотя бы одна буква.", () -> openMapCreate(pl));
+                          return;
+                      }
+                      if (plugin.maps.get(name) != null) {
+                          info(pl, "Новая карта", "Карта с таким названием уже есть.", () -> openMapCreate(pl));
+                          return;
+                      }
+                      DuelMap m = new DuelMap(name);
+                      m.enabled = false;
+                      plugin.maps.add(m);
+                      openMapEditor(pl, m, "Карта создана. Задай общую точку, спавны и сет, затем включи карту.");
+                  });
+              }
+
+              private void openMapList(Player p) {
+                  List<DuelMap> list = plugin.maps.all();
+                  if (list.isEmpty()) {
+                      info(p, "Карты", "Карт пока нет.", () -> openAdmin(p));
+                      return;
+                  }
+                  FormWindowSimple f = new FormWindowSimple("Карты", "Выбери карту:");
+                  for (DuelMap m : list) {
+                      String st = plugin.manager.isBusy(m.name) ? "занята"
+                              : (m.isReady(plugin.settings) ? "готова" : (m.enabled ? "не готова" : "выключена"));
+                      f.addButton(button2(m.name, st));
+                  }
+                  f.addButton(button("Назад"));
+                  open(p, f, (pl, r, closed) -> {
+                      if (closed) {
+                          return;
+                      }
+                      int i = clicked(r);
+                      if (i < 0 || i >= list.size()) {
+                          openAdmin(pl);
+                          return;
+                      }
+                      openMapEditor(pl, list.get(i), null);
+                  });
+              }
+
+              private String yn(boolean b) {
+                  return b ? "задана" : "нет";
+              }
+
+              public void openMapEditor(Player p, DuelMap m, String note) {
+                  Settings s = plugin.settings;
+                  boolean busy = plugin.manager.isBusy(m.name);
+                  String prob = m.problem(s);
+                  StringBuilder sb = new StringBuilder();
+                  if (note != null) {
+                      sb.append(note).append("\n\n");
+                  }
+                  sb.append("Мир: ").append(m.lobby == null ? "не задан" : m.lobby.level).append("\n");
+                  sb.append("Общая точка (лобби): ").append(yn(m.lobby != null)).append("\n");
+                  sb.append("Спавн красных: ").append(yn(m.red != null)).append("\n");
+                  sb.append("Спавн синих: ").append(yn(m.blue != null)).append("\n");
+                  sb.append("Сет: ").append(m.hasKit() ? m.kitItems() + " предм., брони " + m.kitArmor() + "/4" : "не задан").append("\n");
+                  sb.append("Граница: ").append(s.radius).append(" блоков в стороны, ").append(s.up).append(" вверх, ").append(s.down)
+                          .append(" вниз от общей точки\n");
+                  sb.append("Статус: ").append(busy ? "занята дуэлью" : (m.enabled ? "включена" : "выключена")).append("\n");
+                  if (prob != null) {
+                      sb.append("Не хватает: ").append(prob);
+                  } else {
+                      sb.append("Карта готова к играм.");
+                  }
+                  FormWindowSimple f = new FormWindowSimple("Карта: " + m.name, sb.toString());
+                  f.addButton(button("Общая точка (лобби) здесь"));
+                  f.addButton(button("Спавн красных здесь"));
+                  f.addButton(button("Спавн синих здесь"));
+                  f.addButton(button("Сет из моего инвентаря"));
+                  f.addButton(button(m.enabled ? "Выключить карту" : "Включить карту"));
+                  f.addButton(button("Удалить карту"));
+                  f.addButton(button("Назад"));
+                  open(p, f, (pl, r, closed) -> {
+                      if (closed) {
+                          return;
+                      }
+                      int i = clicked(r);
+                      if (i < 0 || i > 5) {
+                          openMapList(pl);
+                          return;
+                      }
+                      if (plugin.manager.isBusy(m.name)) {
+                          info(pl, "Карта: " + m.name, "На карте идёт дуэль, изменения сейчас недоступны.", () -> openMapEditor(pl, m, null));
+                          return;
+                      }
+                      switch (i) {
+                          case 0:
+                              m.lobby = DuelMap.Pt.of(pl);
+                              plugin.maps.save(m);
+                              openMapEditor(pl, m, "Общая точка задана. Граница дуэли: " + s.radius + " блоков в стороны, " + s.up
+                                      + " вверх, " + s.down + " вниз от неё.");
+                              break;
+                          case 1:
+                          case 2:
+                              setSpawn(pl, m, i == 1);
+                              break;
+                          case 3:
+                              int n = m.setKitFrom(pl);
+                              if (n == 0) {
+                                  openMapEditor(pl, m, "Инвентарь пуст, сет не сохранён.");
+                              } else {
+                                  plugin.maps.save(m);
+                                  openMapEditor(pl, m, "Сет сохранён: положение вещей, броня и вторая рука записаны как в твоём инвентаре.");
+                              }
+                              break;
+                          case 4:
+                              if (!m.enabled && m.problem(s) != null) {
+                                  openMapEditor(pl, m, "Нельзя включить: " + m.problem(s) + ".");
+                              } else {
+                                  m.enabled = !m.enabled;
+                                  plugin.maps.save(m);
+                                  openMapEditor(pl, m, m.enabled ? "Карта включена." : "Карта выключена.");
+                              }
+                              break;
+                          case 5:
+                              confirm(pl, "Удалить карту", "Удалить карту " + m.name + " вместе с сетом?", () -> {
+                                  plugin.maps.remove(m.name);
+                                  openMapList(pl);
+                              }, () -> openMapEditor(pl, m, null));
+                              break;
+                          default:
+                              break;
+                      }
+                  });
+              }
+
+              private void setSpawn(Player p, DuelMap m, boolean red) {
+                  Settings s = plugin.settings;
+                  if (m.lobby == null) {
+                      openMapEditor(p, m, "Сначала задай общую точку (лобби).");
+                      return;
+                  }
+                  DuelMap.Pt pt = DuelMap.Pt.of(p);
+                  if (!pt.level.equals(m.lobby.level)) {
+                      openMapEditor(p, m, "Спавн должен быть в том же мире, что и общая точка.");
+                      return;
+                  }
+                  if (m.excess(s, pt.x, pt.y, pt.z) > 0) {
+                      openMapEditor(p, m, "Эта точка вне границы дуэли (" + s.radius + " в стороны, " + s.up + " вверх, " + s.down
+                              + " вниз от общей точки).");
+                      return;
+                  }
+                  if (red) {
+                      m.red = pt;
+                  } else {
+                      m.blue = pt;
+                  }
+                  plugin.maps.save(m);
+                  openMapEditor(p, m, red ? "Спавн красных задан." : "Спавн синих задан.");
+              }
+
+              private void openActive(Player p) {
+                  List<Match> list = plugin.manager.all();
+                  if (list.isEmpty()) {
+                      info(p, "Активные дуэли", "Сейчас нет активных дуэлей.", () -> openAdmin(p));
+                      return;
+                  }
+                  FormWindowSimple f = new FormWindowSimple("Активные дуэли", "Выбери дуэль, чтобы завершить её принудительно:");
+                  for (Match m : list) {
+                      f.addButton(button2(m.map.name + "  " + m.size + "x" + m.size, "Создал: " + m.creator + "  Игроков: " + m.count()));
+                  }
+                  f.addButton(button("Назад"));
+                  open(p, f, (pl, r, closed) -> {
+                      if (closed) {
+                          return;
+                      }
+                      int i = clicked(r);
+                      if (i < 0 || i >= list.size()) {
+                          openAdmin(pl);
+                          return;
+                      }
+                      Match m = list.get(i);
+                      confirm(pl, "Завершить дуэль", "Завершить дуэль на карте " + m.map.name + "? Все игроки получат вещи обратно.", () -> {
+                          m.finish(null, "Дуэль завершена администратором.");
+                          openActive(pl);
+                      }, () -> openActive(pl));
+                  });
+              }
+          }
+          EOF_DUEL_07
+          cat > src/main/java/ru/eclips/duel/ItemCodec.java <<'EOF_DUEL_08'
+          package ru.eclips.duel;
+
+          import cn.nukkit.item.Item;
+          import cn.nukkit.nbt.NBTIO;
+          import cn.nukkit.nbt.tag.CompoundTag;
+
+          import java.nio.ByteOrder;
+          import java.util.Base64;
+
+          /** Предмет <-> строка. Вариант 1: NBT. Вариант 2 (запасной): id:meta:count:nbt. */
+          public final class ItemCodec {
+              private ItemCodec() {
+              }
+
+              public static boolean isEmpty(Item item) {
+                  return item == null || item.isNull();
+              }
+
+              public static Item air() {
+                  return Item.get(0);
+              }
+
+              public static String encode(Item item) {
+                  if (isEmpty(item)) {
+                      return "";
+                  }
+                  try {
+                      CompoundTag tag = NBTIO.putItemHelper(item);
+                      byte[] data = NBTIO.write(tag, ByteOrder.LITTLE_ENDIAN, false);
+                      return "N:" + Base64.getEncoder().encodeToString(data);
+                  } catch (Throwable ignored) {
+                  }
+                  try {
+                      byte[] nbt = item.getCompoundTag();
+                      return "L:" + item.getId() + ":" + item.getDamage() + ":" + item.getCount() + ":"
+                              + (nbt == null ? "" : Base64.getEncoder().encodeToString(nbt));
+                  } catch (Throwable ignored) {
+                  }
+                  return "";
+              }
+
+              public static Item decode(String s) {
+                  if (s == null || s.isEmpty()) {
+                      return null;
+                  }
+                  try {
+                      if (s.startsWith("N:")) {
+                          byte[] data = Base64.getDecoder().decode(s.substring(2));
+                          CompoundTag tag = NBTIO.read(data, ByteOrder.LITTLE_ENDIAN, false);
+                          Item it = NBTIO.getItemHelper(tag);
+                          return isEmpty(it) ? null : it;
+                      }
+                      if (s.startsWith("L:")) {
+                          String[] p = s.split(":", 5);
+                          Item it = Item.get(Integer.parseInt(p[1]), Integer.parseInt(p[2]), Integer.parseInt(p[3]));
+                          if (p.length > 4 && !p[4].isEmpty()) {
+                              it.setCompoundTag(Base64.getDecoder().decode(p[4]));
+                          }
+                          return isEmpty(it) ? null : it;
+                      }
+                  } catch (Throwable ignored) {
+                  }
+                  return null;
+              }
+          }
+          EOF_DUEL_08
+          cat > src/main/java/ru/eclips/duel/MapStore.java <<'EOF_DUEL_09'
+          package ru.eclips.duel;
+
+          import cn.nukkit.utils.Config;
+          import cn.nukkit.utils.ConfigSection;
+
+          import java.io.File;
+          import java.util.ArrayList;
+          import java.util.LinkedHashMap;
+          import java.util.List;
+          import java.util.Map;
+
+          /** Хранилище карт (maps.yml). Ключи карт имеют префикс m_, чтобы YAML не путал имена с числами и булевыми. */
+          public final class MapStore {
+              private final File file;
+              private Config cfg;
+              private final Map<String, DuelMap> maps = new LinkedHashMap<>();
+
+              public MapStore(File file) {
+                  this.file = file;
+                  load();
+              }
+
+              public void load() {
+                  cfg = new Config(file, Config.YAML);
+                  maps.clear();
+                  try {
+                      ConfigSection sec = cfg.getSection("maps");
+                      for (String key : sec.getKeys(false)) {
+                          if (!key.startsWith("m_")) {
+                              continue;
+                          }
+                          String name = key.substring(2);
+                          String b = "maps." + key;
+                          DuelMap m = new DuelMap(name);
+                          m.enabled = cfg.getBoolean(b + ".enabled", true);
+                          m.lobby = DuelMap.Pt.parse(cfg.getString(b + ".lobby", ""));
+                          m.red = DuelMap.Pt.parse(cfg.getString(b + ".red", ""));
+                          m.blue = DuelMap.Pt.parse(cfg.getString(b + ".blue", ""));
+                          ConfigSection ks = cfg.getSection(b + ".kit");
+                          for (String k : ks.getKeys(false)) {
+                              String v = ks.getString(k, "");
+                              if (v != null && !v.isEmpty()) {
+                                  m.kit.put(k, v);
+                              }
+                          }
+                          maps.put(name.toLowerCase(), m);
+                      }
+                  } catch (Throwable ignored) {
+                  }
+              }
+
+              public DuelMap get(String name) {
+                  return name == null ? null : maps.get(name.toLowerCase());
+              }
+
+              public List<DuelMap> all() {
+                  return new ArrayList<>(maps.values());
+              }
+
+              public void add(DuelMap m) {
+                  maps.put(m.name.toLowerCase(), m);
+                  save(m);
+              }
+
+              public void save(DuelMap m) {
+                  try {
+                      String b = "maps.m_" + m.name;
+                      cfg.set(b + ".name", m.name);
+                      cfg.set(b + ".enabled", m.enabled);
+                      cfg.set(b + ".lobby", m.lobby == null ? "" : m.lobby.serialize());
+                      cfg.set(b + ".red", m.red == null ? "" : m.red.serialize());
+                      cfg.set(b + ".blue", m.blue == null ? "" : m.blue.serialize());
+                      cfg.set(b + ".kit", new LinkedHashMap<String, Object>(m.kit));
+                      cfg.save();
+                  } catch (Throwable ignored) {
+                  }
+              }
+
+              public void remove(String name) {
+                  DuelMap m = maps.remove(name.toLowerCase());
+                  if (m == null) {
+                      return;
+                  }
+                  try {
+                      cfg.getSection("maps").remove("m_" + m.name);
+                      cfg.save();
+                  } catch (Throwable ignored) {
+                  }
+              }
+          }
+          EOF_DUEL_09
+          cat > src/main/java/ru/eclips/duel/Match.java <<'EOF_DUEL_10'
+          package ru.eclips.duel;
+
+          import cn.nukkit.Player;
+          import cn.nukkit.block.Block;
+          import cn.nukkit.item.Item;
+          import cn.nukkit.level.Level;
+          import cn.nukkit.level.Location;
+          import cn.nukkit.math.Vector3;
+
+          import java.util.ArrayList;
+          import java.util.Collection;
+          import java.util.Collections;
+          import java.util.HashSet;
+          import java.util.LinkedHashMap;
+          import java.util.List;
+          import java.util.Map;
+          import java.util.Random;
+          import java.util.Set;
+          import java.util.UUID;
+
+          /** Одна дуэль: ожидание, отсчёт, бой, завершение. */
+          public final class Match {
+              public enum State { WAITING, COUNTDOWN, RUNNING, ENDED }
+
+              public enum Team { RED, BLUE }
+
+              public static final class Member {
+                  public final UUID id;
+                  public final String name;
+                  public Team team;
+                  public boolean alive = true;
+                  public boolean frozen;
+                  public boolean deathPending;
+                  public UUID pendingKiller;
+                  public int kills;
+                  public int outside;
+                  PlayerState saved;
+                  String origTag = "";
+
+                  Member(UUID id, String name) {
+                      this.id = id;
+                      this.name = name;
+                  }
+              }
+
+              private static final double[][] OFFSETS = {{0, 0}, {1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+
+              private final DuelPlugin plugin;
+              public final DuelMap map;
+              public final String creator;
+              public final int size;
+              public final String password;
+              public State state = State.WAITING;
+
+              private final Map<UUID, Member> members = new LinkedHashMap<>();
+              private int waitLeft;
+              private int countLeft;
+              private int timeLeft;
+              private final Set<Long> placed = new HashSet<>();
+              private final Random rnd = new Random();
+
+              private Level snapLevel;
+              private int[] snapIds;
+              private int[] snapMetas;
+              private int sx;
+              private int sy;
+              private int sz;
+              private int nx;
+              private int ny;
+
+              public Match(DuelPlugin plugin, DuelMap map, String creator, int size, String password) {
+                  this.plugin = plugin;
+                  this.map = map;
+                  this.creator = creator;
+                  this.size = size;
+                  this.password = password;
+                  this.waitLeft = plugin.settings.lobbyWait;
+              }
+
+              // ---------------- доступ ----------------
+
+              public boolean hasPassword() {
+                  return password != null && !password.isEmpty();
+              }
+
+              public int count() {
+                  return members.size();
+              }
+
+              public boolean isFull() {
+                  return members.size() >= size * 2;
+              }
+
+              public Member member(UUID id) {
+                  return members.get(id);
+              }
+
+              public Collection<Member> members() {
+                  return new ArrayList<>(members.values());
+              }
+
+              public int teamCount(Team t) {
+                  int n = 0;
+                  for (Member m : members.values()) {
+                      if (m.team == t) {
+                          n++;
+                      }
+                  }
+                  return n;
+              }
+
+              private int aliveCount(Team t) {
+                  int n = 0;
+                  for (Member m : members.values()) {
+                      if (m.team == t && m.alive) {
+                          n++;
+                      }
+                  }
+                  return n;
+              }
+
+              public String teamLabel(Team t) {
+                  Settings s = plugin.settings;
+                  return t == Team.RED ? s.redColor + "§l" + s.redName + "§r" : s.blueColor + "§l" + s.blueName + "§r";
+              }
+
+              private String teamColor(Team t) {
+                  return t == Team.RED ? plugin.settings.redColor : plugin.settings.blueColor;
+              }
+
+              public void broadcast(String msg) {
+                  for (Member m : members.values()) {
+                      Player p = plugin.online(m.id);
+                      if (p != null) {
+                          p.sendMessage(msg);
+                      }
+                  }
+              }
+
+              // ---------------- блоки, поставленные игроками ----------------
+
+              public static long key(int x, int y, int z) {
+                  return (((long) x & 0x3FFFFFFL) << 38) | (((long) z & 0x3FFFFFFL) << 12) | ((long) y & 0xFFFL);
+              }
+
+              public void markPlaced(int x, int y, int z) {
+                  placed.add(key(x, y, z));
+              }
+
+              public boolean isPlaced(int x, int y, int z) {
+                  return placed.contains(key(x, y, z));
+              }
+
+              public void unmarkPlaced(int x, int y, int z) {
+                  placed.remove(key(x, y, z));
+              }
+
+              // ---------------- вход ----------------
+
+              public boolean addPlayer(Player p) {
+                  if (state != State.WAITING || isFull() || members.containsKey(p.getUniqueId())) {
+                      return false;
+                  }
+                  Location lobby = plugin.loc(map.lobby, 0, 0);
+                  if (lobby == null) {
+                      return false;
+                  }
+                  PlayerState st = PlayerState.capture(p);
+                  if (!st.safe) {
+                      p.sendMessage(Msg.err("Не удалось надёжно сохранить твой инвентарь, поэтому дуэль сейчас недоступна."));
+                      return false;
+                  }
+                  try {
+                      st.write(plugin.savedDir, p.getUniqueId());
+                  } catch (Throwable t) {
+                      p.sendMessage(Msg.err("Не удалось сохранить твой инвентарь, дуэль сейчас недоступна."));
+                      return false;
+                  }
+                  Member mb = new Member(p.getUniqueId(), p.getName());
+                  mb.saved = st;
+                  mb.origTag = st.nameTag;
+                  members.put(mb.id, mb);
+                  plugin.manager.bind(this, mb.id);
+
+                  try {
+                      p.getInventory().clearAll();
+                  } catch (Throwable ignored) {
+                  }
+                  Util.setOffhand(p, null);
+                  Util.clearEffects(p);
+                  Util.setFlight(p, false, false);
+                  Util.heal(p);
+                  try {
+                      Item compass = Util.item("compass", 345);
+                      compass.setCustomName(Msg.COMPASS_NAME);
+                      p.getInventory().setItem(4, compass);
+                      Refl.run(p.getInventory(), "setHeldItemIndex", 4);
+                  } catch (Throwable ignored) {
+                  }
+                  plugin.teleport(p, lobby);
+
+                  p.sendMessage(Msg.ok("Ты в дуэли на карте " + map.name + " (" + size + "x" + size + "). Нажми компасом, чтобы выбрать "
+                          + "команду. Если не выберешь, команда назначится сама."));
+                  broadcast(Msg.info(p.getName() + " присоединился (" + members.size() + "/" + (size * 2) + ")."));
+                  checkReadyStart();
+                  return true;
+              }
+
+              public void chooseTeam(Player p, Team t) {
+                  Member mb = members.get(p.getUniqueId());
+                  if (mb == null || state != State.WAITING) {
+                      return;
+                  }
+                  if (mb.team != null) {
+                      p.sendMessage(Msg.err("Команда уже выбрана, менять её нельзя."));
+                      return;
+                  }
+                  if (teamCount(t) >= size) {
+                      p.sendMessage(Msg.err("Эта команда уже заполнена. Выбери другую."));
+                      return;
+                  }
+                  mb.team = t;
+                  p.sendMessage(Msg.ok("Ты выбрал команду " + teamLabel(t) + "§r§a. Менять её нельзя."));
+                  applyTag(p, mb);
+                  checkReadyStart();
+              }
+
+              private void checkReadyStart() {
+                  if (state != State.WAITING || !isFull()) {
+                      return;
+                  }
+                  boolean allChosen = true;
+                  for (Member m : members.values()) {
+                      if (m.team == null) {
+                          allChosen = false;
+                      }
+                  }
+                  if (allChosen) {
+                      startCountdown();
+                  } else if (waitLeft > 8) {
+                      waitLeft = 8;
+                      broadcast(Msg.info("Все собрались! Выбери команду, через 8 секунд начнётся дуэль."));
+                  }
+              }
+
+              // ---------------- тик (раз в секунду) ----------------
+
+              public void tick() {
+                  switch (state) {
+                      case WAITING:
+                          tickWaiting();
+                          break;
+                      case COUNTDOWN:
+                          tickCountdown();
+                          break;
+                      case RUNNING:
+                          tickRunning();
+                          break;
+                      default:
+                          break;
+                  }
+              }
+
+              private void tickWaiting() {
+                  waitLeft--;
+                  if (waitLeft <= 0) {
+                      startCountdown();
+                      return;
+                  }
+                  for (Member m : members.values()) {
+                      Player p = plugin.online(m.id);
+                      if (p == null) {
+                          continue;
+                      }
+                      Util.tip(p, "§l§6Ожидание игроков: " + members.size() + "/" + (size * 2) + "  ·  осталось " + waitLeft + " сек");
+                      enforce(p, m);
+                  }
+              }
+
+              private void tickCountdown() {
+                  countLeft--;
+                  if (countLeft <= 0) {
+                      startFight();
+                      return;
+                  }
+                  for (Member m : members.values()) {
+                      Player p = plugin.online(m.id);
+                      if (p == null) {
+                          continue;
+                      }
+                      Util.title(p, "§l§6" + countLeft, m.team == null ? "" : "§l" + teamLabel(m.team), 0, 25, 0);
+                      applyTag(p, m);
+                      enforce(p, m);
+                  }
+              }
+
+              private void tickRunning() {
+                  timeLeft--;
+                  if (timeLeft <= 0) {
+                      finish(null, "Время вышло, ничья.");
+                      return;
+                  }
+                  String bar = "§l§6" + Msg.mmss(timeLeft) + "  ·  " + teamLabel(Team.RED) + " §l§6" + aliveCount(Team.RED)
+                          + "  :  " + aliveCount(Team.BLUE) + " " + teamLabel(Team.BLUE);
+                  for (Member m : new ArrayList<>(members.values())) {
+                      Player p = plugin.online(m.id);
+                      if (p == null) {
+                          continue;
+                      }
+                      Util.tip(p, bar);
+                      applyTag(p, m);
+                      enforce(p, m);
+                  }
+              }
+
+              /** Возвращает игрока, если он слишком далеко за границей или завис снаружи. */
+              private void enforce(Player p, Member m) {
+                  try {
+                      double ex = map.excess(plugin.settings, p.getX(), p.getY(), p.getZ());
+                      if (ex > 0) {
+                          m.outside++;
+                          if (ex >= plugin.settings.tpBackExcess || m.outside >= 3) {
+                              m.outside = 0;
+                              p.sendMessage(Msg.err("Вы вышли за пределы дуэли."));
+                              backToSpawn(p, m);
+                          }
+                      } else {
+                          m.outside = 0;
+                      }
+                  } catch (Throwable ignored) {
+                  }
+              }
+
+              private void backToSpawn(Player p, Member m) {
+                  Location l = null;
+                  if (m.team != null && m.alive && (state == State.COUNTDOWN || state == State.RUNNING)) {
+                      l = spawnFor(m.team, 0);
+                  }
+                  if (l == null) {
+                      l = plugin.loc(map.lobby, 0, 0);
+                  }
+                  if (l != null) {
+                      plugin.teleport(p, l);
+                  }
+              }
+
+              private Location spawnFor(Team t, int idx) {
+                  DuelMap.Pt base = t == Team.RED ? map.red : map.blue;
+                  double[] o = OFFSETS[idx % OFFSETS.length];
+                  return plugin.loc(base, o[0], o[1]);
+              }
+
+              private void applyTag(Player p, Member m) {
+                  if (m.team == null) {
+                      return;
+                  }
+                  try {
+                      String src = m.origTag == null || m.origTag.isEmpty() ? p.getName() : m.origTag;
+                      String want = teamColor(m.team) + Msg.strip(src);
+                      if (!want.equals(p.getNameTag())) {
+                          p.setNameTag(want);
+                      }
+                  } catch (Throwable ignored) {
+                  }
+              }
+
+              // ---------------- старт ----------------
+
+              private void autoAssign() {
+                  List<Member> un = new ArrayList<>();
+                  for (Member m : members.values()) {
+                      if (m.team == null) {
+                          un.add(m);
+                      }
+                  }
+                  Collections.shuffle(un, rnd);
+                  for (Member m : un) {
+                      int r = teamCount(Team.RED);
+                      int b = teamCount(Team.BLUE);
+                      Team t;
+                      if (r >= size) {
+                          t = Team.BLUE;
+                      } else if (b >= size) {
+                          t = Team.RED;
+                      } else if (r < b) {
+                          t = Team.RED;
+                      } else if (b < r) {
+                          t = Team.BLUE;
+                      } else {
+                          t = rnd.nextBoolean() ? Team.RED : Team.BLUE;
+                      }
+                      m.team = t;
+                  }
+              }
+
+              private void startCountdown() {
+                  if (state != State.WAITING) {
+                      return;
+                  }
+                  autoAssign();
+                  if (teamCount(Team.RED) == 0 || teamCount(Team.BLUE) == 0) {
+                      finish(null, "Никто не присоединился, дуэль отменена.");
+                      return;
+                  }
+                  state = State.COUNTDOWN;
+                  countLeft = plugin.settings.countdown;
+                  takeSnapshot();
+                  int ri = 0;
+                  int bi = 0;
+                  for (Member m : members.values()) {
+                      Player p = plugin.online(m.id);
+                      if (p == null) {
+                          continue;
+                      }
+                      int idx = m.team == Team.RED ? ri++ : bi++;
+                      Location l = spawnFor(m.team, idx);
+                      if (l != null) {
+                          plugin.teleport(p, l);
+                      }
+                      map.giveKit(p);
+                      Util.heal(p);
+                      Util.clearEffects(p);
+                      Refl.run(p, "setExperience", 0, 0);
+                      m.frozen = true;
+                      Util.setImmobile(p, true);
+                      applyTag(p, m);
+                      p.sendMessage(Msg.info("Твоя команда: " + teamLabel(m.team) + "§r§6. Старт через " + countLeft + " сек."));
+                  }
+              }
+
+              private void startFight() {
+                  state = State.RUNNING;
+                  timeLeft = plugin.settings.matchTime;
+                  for (Member m : members.values()) {
+                      m.frozen = false;
+                      Player p = plugin.online(m.id);
+                      if (p != null) {
+                          Util.setImmobile(p, false);
+                          Util.title(p, "§l§aВПЕРЁД!", "§lУдачи в бою", 0, 30, 10);
+                      }
+                  }
+                  broadcast(Msg.ok("Дуэль началась! Время боя: " + Msg.mmss(timeLeft) + "."));
+              }
+
+              // ---------------- бой ----------------
+
+              /** Смертельный урон перехвачен: игрок выбывает без дропа. */
+              public void onDeath(Player victim, Player killer) {
+                  Member vm = members.get(victim.getUniqueId());
+                  if (vm == null || state != State.RUNNING || !vm.alive) {
+                      return;
+                  }
+                  vm.alive = false;
+                  vm.deathPending = false;
+                  plugin.stats.add(vm.id, vm.name, "deaths", 1);
+                  Member km = killer == null ? null : members.get(killer.getUniqueId());
+                  if (km != null && km.team != vm.team) {
+                      km.kills++;
+                      plugin.stats.add(km.id, km.name, "kills", 1);
+                      broadcast(Msg.info(km.name + " победил в схватке игрока " + vm.name + "."));
+                  } else {
+                      broadcast(Msg.info(vm.name + " выбыл из боя."));
+                  }
+                  toSpectator(victim, vm);
+                  checkWin();
+              }
+
+              private void toSpectator(Player p, Member m) {
+                  try {
+                      p.getInventory().clearAll();
+                      Util.setOffhand(p, null);
+                      Util.clearEffects(p);
+                      Util.heal(p);
+                      p.setGamemode(3);
+                      Location l = plugin.loc(map.lobby, 0, 0);
+                      if (l != null) {
+                          plugin.teleport(p, l);
+                      }
+                      p.sendMessage(Msg.info("Ты выбыл. Наблюдай за боем или выйди через /duel, вещи вернутся."));
+                  } catch (Throwable t) {
+                      // запасной вариант: сразу вернуть домой
+                      members.remove(m.id);
+                      plugin.manager.unbind(m.id);
+                      restoreMember(m, p);
+                      p.sendMessage(Msg.info("Ты выбыл из дуэли, вещи возвращены."));
+                      checkWin();
+                  }
+              }
+
+              private void checkWin() {
+                  if (state != State.RUNNING) {
+                      return;
+                  }
+                  int r = aliveCount(Team.RED);
+                  int b = aliveCount(Team.BLUE);
+                  if (r > 0 && b > 0) {
+                      return;
+                  }
+                  if (r == 0 && b == 0) {
+                      finish(null, "Ничья.");
+                  } else {
+                      finish(r > 0 ? Team.RED : Team.BLUE, null);
+                  }
+              }
+
+              // ---------------- выход ----------------
+
+              public void leave(Player p, boolean quitting) {
+                  Member mb = members.get(p.getUniqueId());
+                  if (mb == null) {
+                      return;
+                  }
+                  if (state == State.RUNNING && mb.alive) {
+                      mb.alive = false;
+                      plugin.stats.add(mb.id, mb.name, "losses", 1);
+                      plugin.stats.add(mb.id, mb.name, "deaths", 1);
+                      broadcast(Msg.info(mb.name + " покинул дуэль (поражение)."));
+                  } else {
+                      broadcast(Msg.info(mb.name + " покинул дуэль."));
+                  }
+                  members.remove(mb.id);
+                  plugin.manager.unbind(mb.id);
+                  restoreMember(mb, p);
+                  if (!quitting) {
+                      p.sendMessage(Msg.ok("Ты вышел из дуэли, вещи возвращены."));
+                  }
+                  if (state == State.WAITING) {
+                      if (members.isEmpty()) {
+                          finish(null, null);
+                      }
+                  } else if (state == State.COUNTDOWN) {
+                      if (teamCount(Team.RED) == 0 || teamCount(Team.BLUE) == 0) {
+                          finish(null, "Соперник вышел, дуэль отменена.");
+                      }
+                  } else if (state == State.RUNNING) {
+                      checkWin();
+                  }
+              }
+
+              /** Вернуть игроку его вещи и позицию. Файл удаляется только после полного успеха. */
+              private void restoreMember(Member m, Player p) {
+                  boolean ok = false;
+                  try {
+                      m.frozen = false;
+                      Util.setImmobile(p, false);
+                      ok = m.saved != null && m.saved.restore(plugin, p);
+                  } catch (Throwable ignored) {
+                  }
+                  if (ok) {
+                      PlayerState.delete(plugin.savedDir, m.id);
+                  }
+              }
+
+              // ---------------- конец ----------------
+
+              public void finish(Team winner, String note) {
+                  if (state == State.ENDED) {
+                      return;
+                  }
+                  State prev = state;
+                  state = State.ENDED;
+                  restoreBlocks();
+                  boolean played = prev == State.RUNNING;
+                  for (Member m : new ArrayList<>(members.values())) {
+                      String result;
+                      if (played && winner != null) {
+                          if (m.team == winner) {
+                              plugin.stats.add(m.id, m.name, "wins", 1);
+                              result = Msg.ok("Победа! Команда " + teamLabel(winner) + "§r§a выиграла дуэль.");
+                          } else {
+                              plugin.stats.add(m.id, m.name, "losses", 1);
+                              result = Msg.err("Поражение. Выиграла команда " + teamLabel(winner) + "§r§c.");
+                          }
+                      } else {
+                          result = Msg.info(note == null ? "Дуэль завершена." : note);
+                      }
+                      members.remove(m.id);
+                      plugin.manager.unbind(m.id);
+                      Player p = plugin.online(m.id);
+                      if (p != null) {
+                          if (played && winner != null) {
+                              Util.title(p, m.team == winner ? "§l§aПОБЕДА" : "§l§cПОРАЖЕНИЕ", "", 5, 40, 10);
+                          }
+                          restoreMember(m, p);
+                          p.sendMessage(result);
+                          p.sendMessage(Msg.info("Твои вещи возвращены."));
+                      }
+                  }
+                  plugin.manager.unregister(this);
+              }
+
+              // ---------------- откат арены ----------------
+
+              private void takeSnapshot() {
+                  try {
+                      Level lv = plugin.getLevel(map.lobby.level);
+                      if (lv == null) {
+                          return;
+                      }
+                      Settings s = plugin.settings;
+                      int r = s.radius + 1;
+                      int cx = (int) Math.floor(map.lobby.x);
+                      int cz = (int) Math.floor(map.lobby.z);
+                      int cy = (int) Math.floor(map.lobby.y);
+                      sx = cx - r;
+                      sz = cz - r;
+                      sy = cy - s.down - 1;
+                      nx = 2 * r + 1;
+                      ny = s.down + Math.max(s.up, s.buildHeight) + 3;
+                      int[] ids = new int[nx * nx * ny];
+                      int[] metas = new int[nx * nx * ny];
+                      for (int xi = 0; xi < nx; xi++) {
+                          for (int zi = 0; zi < nx; zi++) {
+                              for (int yi = 0; yi < ny; yi++) {
+                                  Block b = lv.getBlock(new Vector3(sx + xi, sy + yi, sz + zi));
+                                  int idx = (xi * nx + zi) * ny + yi;
+                                  ids[idx] = b.getId();
+                                  metas[idx] = Util.meta(b);
+                              }
+                          }
+                      }
+                      snapLevel = lv;
+                      snapIds = ids;
+                      snapMetas = metas;
+                  } catch (Throwable t) {
+                      snapIds = null;
+                      snapLevel = null;
+                  }
+              }
+
+              private void restoreBlocks() {
+                  if (snapIds == null || snapLevel == null) {
+                      return;
+                  }
+                  try {
+                      for (int xi = 0; xi < nx; xi++) {
+                          for (int zi = 0; zi < nx; zi++) {
+                              for (int yi = 0; yi < ny; yi++) {
+                                  int idx = (xi * nx + zi) * ny + yi;
+                                  Vector3 v = new Vector3(sx + xi, sy + yi, sz + zi);
+                                  Block cur = snapLevel.getBlock(v);
+                                  if (cur.getId() != snapIds[idx] || Util.meta(cur) != snapMetas[idx]) {
+                                      Block orig = Util.block(snapIds[idx], snapMetas[idx]);
+                                      if (orig != null) {
+                                          snapLevel.setBlock(v, orig, true, false);
+                                      }
+                                  }
+                              }
+                          }
+                      }
+                  } catch (Throwable ignored) {
+                  }
+                  snapIds = null;
+                  snapMetas = null;
+                  placed.clear();
+              }
+          }
+          EOF_DUEL_10
+          cat > src/main/java/ru/eclips/duel/Msg.java <<'EOF_DUEL_11'
+          package ru.eclips.duel;
+
+          import java.util.regex.Pattern;
+
+          /** Тексты и цвета. Все сообщения читаются и на тёмном, и на светлом фоне. */
+          public final class Msg {
+              public static final String COMPASS_NAME = "§l§6Выбор команды §r§6(нажми ПКМ)";
+              private static final Pattern COLOR = Pattern.compile("§[0-9a-fk-orA-FK-OR]");
+
+              private Msg() {
+              }
+
+              public static String info(String s) {
+                  return "§l§6[Дуэль]§r§6 " + s;
+              }
+
+              public static String ok(String s) {
+                  return "§l§6[Дуэль]§r§a " + s;
+              }
+
+              public static String err(String s) {
+                  return "§l§6[Дуэль]§r§c " + s;
+              }
+
+              public static String strip(String s) {
+                  return s == null ? "" : COLOR.matcher(s).replaceAll("");
+              }
+
+              /** Жирный чёрный текст: хорошо читается на серых кнопках форм. */
+              public static String btn(String s) {
+                  return "§l§0" + s;
+              }
+
+              public static String btn2(String a, String b) {
+                  return "§l§0" + a + "\n§l§0" + b;
+              }
+
+              public static String mmss(int sec) {
+                  if (sec < 0) {
+                      sec = 0;
+                  }
+                  int m = sec / 60;
+                  int s = sec % 60;
+                  return m + ":" + (s < 10 ? "0" : "") + s;
+              }
+          }
+          EOF_DUEL_11
+          cat > src/main/java/ru/eclips/duel/PlayerState.java <<'EOF_DUEL_12'
+          package ru.eclips.duel;
+
+          import cn.nukkit.Player;
+          import cn.nukkit.inventory.PlayerInventory;
+          import cn.nukkit.item.Item;
+          import cn.nukkit.level.Level;
+          import cn.nukkit.level.Location;
+          import cn.nukkit.level.Position;
+
+          import java.io.File;
+          import java.io.FileInputStream;
+          import java.io.FileOutputStream;
+          import java.io.IOException;
+          import java.io.InputStreamReader;
+          import java.io.OutputStreamWriter;
+          import java.io.Writer;
+          import java.nio.charset.StandardCharsets;
+          import java.nio.file.AtomicMoveNotSupportedException;
+          import java.nio.file.Files;
+          import java.nio.file.StandardCopyOption;
+          import java.util.ArrayList;
+          import java.util.LinkedHashMap;
+          import java.util.List;
+          import java.util.Map;
+          import java.util.Properties;
+          import java.util.UUID;
+
+          /**
+           * Полный снимок игрока до дуэли. Пишется на диск ДО очистки инвентаря,
+           * поэтому переживает рестарт и краш сервера.
+           */
+          public final class PlayerState {
+              public final Map<Integer, String> items = new LinkedHashMap<>();
+              public final String[] armor = {"", "", "", ""};
+              public String offhand = "";
+              public int exp;
+              public int level;
+              public int food = 20;
+              public int gamemode;
+              public float health = 20f;
+              public float saturation = 5f;
+              public boolean allowFlight;
+              public final List<int[]> effects = new ArrayList<>();
+              public String levelName = "";
+              public double x;
+              public double y;
+              public double z;
+              public double yaw;
+              public double pitch;
+              public String nameTag = "";
+              /** false, если какой-то предмет не удалось закодировать (тогда в дуэль не пускаем). */
+              public boolean safe = true;
+
+              private String enc(Item it) {
+                  if (ItemCodec.isEmpty(it)) {
+                      return "";
+                  }
+                  String s = ItemCodec.encode(it);
+                  if (s.isEmpty()) {
+                      safe = false;
+                  }
+                  return s;
+              }
+
+              public static PlayerState capture(Player p) {
+                  PlayerState s = new PlayerState();
+                  try {
+                      PlayerInventory inv = p.getInventory();
+                      int size = inv.getSize();
+                      for (int i = 0; i < size; i++) {
+                          String e = s.enc(inv.getItem(i));
+                          if (!e.isEmpty()) {
+                              s.items.put(i, e);
+                          }
+                      }
+                      s.armor[0] = s.enc(inv.getHelmet());
+                      s.armor[1] = s.enc(inv.getChestplate());
+                      s.armor[2] = s.enc(inv.getLeggings());
+                      s.armor[3] = s.enc(inv.getBoots());
+                      s.offhand = s.enc(Util.getOffhand(p));
+                  } catch (Throwable t) {
+                      s.safe = false;
+                  }
+                  s.exp = Util.num(Refl.call(p, "getExperience"));
+                  s.level = Util.num(Refl.call(p, "getExperienceLevel"));
+                  try {
+                      s.health = p.getHealth();
+                  } catch (Throwable ignored) {
+                  }
+                  Object fd = Refl.call(p, "getFoodData");
+                  Object lv = Refl.call(fd, "getLevel");
+                  if (lv instanceof Number) {
+                      s.food = ((Number) lv).intValue();
+                  }
+                  Object sat = Refl.call(fd, "getFoodSaturationLevel");
+                  if (sat instanceof Number) {
+                      s.saturation = ((Number) sat).floatValue();
+                  }
+                  try {
+                      s.gamemode = p.getGamemode();
+                  } catch (Throwable ignored) {
+                  }
+                  s.allowFlight = Util.getAllowFlight(p);
+                  Object em = Refl.call(p, "getEffects");
+                  if (em instanceof Map) {
+                      for (Object ef : ((Map<?, ?>) em).values()) {
+                          int dur = Util.num(Refl.call(ef, "getDuration"));
+                          if (dur > 0) {
+                              s.effects.add(new int[]{Util.num(Refl.call(ef, "getId")), Util.num(Refl.call(ef, "getAmplifier")), dur});
+                          }
+                      }
+                  }
+                  try {
+                      Location l = p.getLocation();
+                      s.levelName = p.getLevel().getFolderName();
+                      s.x = l.getX();
+                      s.y = l.getY();
+                      s.z = l.getZ();
+                      s.yaw = l.getYaw();
+                      s.pitch = l.getPitch();
+                  } catch (Throwable ignored) {
+                  }
+                  try {
+                      String nt = p.getNameTag();
+                      s.nameTag = nt == null ? "" : nt;
+                  } catch (Throwable ignored) {
+                  }
+                  return s;
+              }
+
+              /** Возвращает true, если вещи и позиция восстановлены полностью. */
+              public boolean restore(DuelPlugin plugin, Player p) {
+                  boolean ok = true;
+                  try {
+                      PlayerInventory inv = p.getInventory();
+                      inv.clearAll();
+                      Util.setOffhand(p, null);
+                      for (Map.Entry<Integer, String> e : items.entrySet()) {
+                          Item it = ItemCodec.decode(e.getValue());
+                          if (it == null) {
+                              ok = false;
+                              continue;
+                          }
+                          inv.setItem(e.getKey(), it);
+                      }
+                      Item h = ItemCodec.decode(armor[0]);
+                      Item c = ItemCodec.decode(armor[1]);
+                      Item l = ItemCodec.decode(armor[2]);
+                      Item b = ItemCodec.decode(armor[3]);
+                      inv.setHelmet(h == null ? ItemCodec.air() : h);
+                      inv.setChestplate(c == null ? ItemCodec.air() : c);
+                      inv.setLeggings(l == null ? ItemCodec.air() : l);
+                      inv.setBoots(b == null ? ItemCodec.air() : b);
+                      Item off = ItemCodec.decode(offhand);
+                      if (off != null) {
+                          Util.setOffhand(p, off);
+                      }
+                      try {
+                          inv.sendContents(p);
+                          inv.sendArmorContents(p);
+                      } catch (Throwable ignored) {
+                      }
+                  } catch (Throwable t) {
+                      ok = false;
+                  }
+                  Refl.run(p, "setExperience", exp, level);
+                  Util.clearEffects(p);
+                  for (int[] e : effects) {
+                      Object eff = Refl.callStatic("cn.nukkit.potion.Effect", "getEffect", e[0]);
+                      if (eff != null) {
+                          Refl.run(eff, "setAmplifier", e[1]);
+                          Refl.run(eff, "setDuration", e[2]);
+                          Refl.run(p, "addEffect", eff);
+                      }
+                  }
+                  try {
+                      if (p.getGamemode() != gamemode) {
+                          p.setGamemode(gamemode);
+                      }
+                  } catch (Throwable ignored) {
+                  }
+                  Util.setFlight(p, allowFlight, false);
+                  try {
+                      float max = p.getMaxHealth();
+                      p.setHealth(health <= 0 ? max : Math.min(health, max));
+                  } catch (Throwable ignored) {
+                  }
+                  Util.setFood(p, food, saturation);
+                  try {
+                      if (!nameTag.isEmpty()) {
+                          p.setNameTag(nameTag);
+                      }
+                  } catch (Throwable ignored) {
+                  }
+                  try {
+                      Level lv = plugin.getLevel(levelName);
+                      Location target;
+                      if (lv != null) {
+                          target = new Location(x, y, z, yaw, pitch, lv);
+                      } else {
+                          Level def = plugin.getServer().getDefaultLevel();
+                          Position sp = def.getSafeSpawn();
+                          target = new Location(sp.getX(), sp.getY(), sp.getZ(), 0, 0, def);
+                      }
+                      plugin.teleport(p, target);
+                  } catch (Throwable t) {
+                      ok = false;
+                  }
+                  return ok;
+              }
+
+              // ---------------- диск ----------------
+
+              public static File file(File dir, UUID id) {
+                  return new File(dir, id + ".dat");
+              }
+
+              public static void delete(File dir, UUID id) {
+                  try {
+                      File f = file(dir, id);
+                      if (f.exists()) {
+                          f.delete();
+                      }
+                  } catch (Throwable ignored) {
+                  }
+              }
+
+              public void write(File dir, UUID id) throws IOException {
+                  if (!dir.exists()) {
+                      dir.mkdirs();
+                  }
+                  Properties pr = new Properties();
+                  pr.setProperty("ver", "1");
+                  for (Map.Entry<Integer, String> e : items.entrySet()) {
+                      pr.setProperty("i." + e.getKey(), e.getValue());
+                  }
+                  for (int i = 0; i < 4; i++) {
+                      pr.setProperty("a." + i, armor[i]);
+                  }
+                  pr.setProperty("off", offhand);
+                  pr.setProperty("exp", String.valueOf(exp));
+                  pr.setProperty("lvl", String.valueOf(level));
+                  pr.setProperty("hp", String.valueOf(health));
+                  pr.setProperty("food", String.valueOf(food));
+                  pr.setProperty("sat", String.valueOf(saturation));
+                  pr.setProperty("gm", String.valueOf(gamemode));
+                  pr.setProperty("fly", String.valueOf(allowFlight));
+                  for (int i = 0; i < effects.size(); i++) {
+                      int[] e = effects.get(i);
+                      pr.setProperty("e." + i, e[0] + "," + e[1] + "," + e[2]);
+                  }
+                  pr.setProperty("world", levelName);
+                  pr.setProperty("x", String.valueOf(x));
+                  pr.setProperty("y", String.valueOf(y));
+                  pr.setProperty("z", String.valueOf(z));
+                  pr.setProperty("yaw", String.valueOf(yaw));
+                  pr.setProperty("pitch", String.valueOf(pitch));
+                  pr.setProperty("tag", nameTag);
+
+                  File tmp = new File(dir, id + ".tmp");
+                  File dst = file(dir, id);
+                  try (FileOutputStream fos = new FileOutputStream(tmp);
+                       Writer w = new OutputStreamWriter(fos, StandardCharsets.UTF_8)) {
+                      pr.store(w, "duel saved state");
+                      w.flush();
+                      fos.getFD().sync();
+                  }
+                  try {
+                      Files.move(tmp.toPath(), dst.toPath(), StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+                  } catch (AtomicMoveNotSupportedException ex) {
+                      Files.move(tmp.toPath(), dst.toPath(), StandardCopyOption.REPLACE_EXISTING);
+                  }
+              }
+
+              public static PlayerState read(File f) {
+                  try (FileInputStream in = new FileInputStream(f);
+                       InputStreamReader r = new InputStreamReader(in, StandardCharsets.UTF_8)) {
+                      Properties pr = new Properties();
+                      pr.load(r);
+                      PlayerState s = new PlayerState();
+                      for (String k : pr.stringPropertyNames()) {
+                          if (k.startsWith("i.")) {
+                              s.items.put(Integer.parseInt(k.substring(2)), pr.getProperty(k));
+                          }
+                      }
+                      for (int i = 0; i < 4; i++) {
+                          s.armor[i] = pr.getProperty("a." + i, "");
+                      }
+                      s.offhand = pr.getProperty("off", "");
+                      s.exp = Integer.parseInt(pr.getProperty("exp", "0"));
+                      s.level = Integer.parseInt(pr.getProperty("lvl", "0"));
+                      s.health = Float.parseFloat(pr.getProperty("hp", "20"));
+                      s.food = Integer.parseInt(pr.getProperty("food", "20"));
+                      s.saturation = Float.parseFloat(pr.getProperty("sat", "5"));
+                      s.gamemode = Integer.parseInt(pr.getProperty("gm", "0"));
+                      s.allowFlight = Boolean.parseBoolean(pr.getProperty("fly", "false"));
+                      for (int i = 0; i < 200; i++) {
+                          String e = pr.getProperty("e." + i);
+                          if (e == null) {
+                              break;
+                          }
+                          String[] p = e.split(",");
+                          s.effects.add(new int[]{Integer.parseInt(p[0]), Integer.parseInt(p[1]), Integer.parseInt(p[2])});
+                      }
+                      s.levelName = pr.getProperty("world", "");
+                      s.x = Double.parseDouble(pr.getProperty("x", "0"));
+                      s.y = Double.parseDouble(pr.getProperty("y", "64"));
+                      s.z = Double.parseDouble(pr.getProperty("z", "0"));
+                      s.yaw = Double.parseDouble(pr.getProperty("yaw", "0"));
+                      s.pitch = Double.parseDouble(pr.getProperty("pitch", "0"));
+                      s.nameTag = pr.getProperty("tag", "");
+                      return s;
+                  } catch (Throwable t) {
+                      return null;
+                  }
+              }
+          }
+          EOF_DUEL_12
+          cat > src/main/java/ru/eclips/duel/Refl.java <<'EOF_DUEL_13'
+          package ru.eclips.duel;
+
+          import java.lang.reflect.Method;
+          import java.util.concurrent.ConcurrentHashMap;
+
+          /**
+           * Безопасные вызовы через рефлексию. Если метода нет в ядре или он упал,
+           * плагин не ломается: вызов просто возвращает null / false.
+           */
+          public final class Refl {
+              private static final ConcurrentHashMap<String, Method> CACHE = new ConcurrentHashMap<>();
+
+              private Refl() {
+              }
+
+              public static Object call(Object target, String name, Object... args) {
+                  if (target == null) {
+                      return null;
+                  }
+                  try {
+                      Method m = find(target.getClass(), name, args);
+                      if (m == null) {
+                          return null;
+                      }
+                      return m.invoke(target, args);
+                  } catch (Throwable t) {
+                      return null;
+                  }
+              }
+
+              /** true, если метод найден и вызван без ошибок. */
+              public static boolean run(Object target, String name, Object... args) {
+                  if (target == null) {
+                      return false;
+                  }
+                  try {
+                      Method m = find(target.getClass(), name, args);
+                      if (m == null) {
+                          return false;
+                      }
+                      m.invoke(target, args);
+                      return true;
+                  } catch (Throwable t) {
+                      return false;
+                  }
+              }
+
+              public static Object callStatic(String className, String name, Object... args) {
+                  try {
+                      Class<?> c = Class.forName(className);
+                      Method m = find(c, name, args);
+                      if (m == null) {
+                          return null;
+                      }
+                      return m.invoke(null, args);
+                  } catch (Throwable t) {
+                      return null;
+                  }
+              }
+
+              public static Object enumValue(String className, String constant) {
+                  try {
+                      Class<?> c = Class.forName(className);
+                      Object[] all = c.getEnumConstants();
+                      if (all == null) {
+                          return null;
+                      }
+                      for (Object o : all) {
+                          if (((Enum<?>) o).name().equals(constant)) {
+                              return o;
+                          }
+                      }
+                  } catch (Throwable ignored) {
+                  }
+                  return null;
+              }
+
+              private static Method find(Class<?> c, String name, Object[] args) {
+                  StringBuilder k = new StringBuilder(c.getName()).append('#').append(name);
+                  for (Object a : args) {
+                      k.append('#').append(a == null ? "null" : a.getClass().getName());
+                  }
+                  String key = k.toString();
+                  Method cached = CACHE.get(key);
+                  if (cached != null) {
+                      return cached;
+                  }
+                  for (Method m : c.getMethods()) {
+                      if (!m.getName().equals(name) || m.getParameterCount() != args.length) {
+                          continue;
+                      }
+                      Class<?>[] pt = m.getParameterTypes();
+                      boolean ok = true;
+                      for (int i = 0; i < pt.length && ok; i++) {
+                          if (args[i] == null) {
+                              ok = !pt[i].isPrimitive();
+                          } else {
+                              ok = wrap(pt[i]).isInstance(args[i]);
+                          }
+                      }
+                      if (ok) {
+                          try {
+                              m.setAccessible(true);
+                          } catch (Throwable ignored) {
+                          }
+                          CACHE.put(key, m);
+                          return m;
+                      }
+                  }
+                  return null;
+              }
+
+              private static Class<?> wrap(Class<?> c) {
+                  if (!c.isPrimitive()) {
+                      return c;
+                  }
+                  if (c == int.class) {
+                      return Integer.class;
+                  }
+                  if (c == boolean.class) {
+                      return Boolean.class;
+                  }
+                  if (c == float.class) {
+                      return Float.class;
+                  }
+                  if (c == double.class) {
+                      return Double.class;
+                  }
+                  if (c == long.class) {
+                      return Long.class;
+                  }
+                  if (c == short.class) {
+                      return Short.class;
+                  }
+                  if (c == byte.class) {
+                      return Byte.class;
+                  }
+                  if (c == char.class) {
+                      return Character.class;
+                  }
+                  return c;
+              }
+          }
+          EOF_DUEL_13
+          cat > src/main/java/ru/eclips/duel/Settings.java <<'EOF_DUEL_14'
+          package ru.eclips.duel;
+
+          import cn.nukkit.utils.Config;
+
+          import java.util.ArrayList;
+          import java.util.Arrays;
+          import java.util.List;
+          import java.util.Locale;
+
+          /** Настройки из config.yml. */
+          public final class Settings {
+              public int lobbyWait = 70;
+              public int countdown = 12;
+              public int matchTime = 600;
+              public int maxTeam = 5;
+              public int radius = 20;
+              public int up = 15;
+              public int down = 30;
+              public int tpBackExcess = 10;
+              public int buildHeight = 10;
+              public int pwMin = 3;
+              public int pwMax = 16;
+              public int statsFlush = 30;
+              public String redColor = "§c";
+              public String blueColor = "§9";
+              public String redName = "Красные";
+              public String blueName = "Синие";
+              public List<String> forbiddenBlocks = new ArrayList<>();
+              public List<String> forbiddenItems = new ArrayList<>();
+              public List<String> interactBlocks = new ArrayList<>();
+              public List<String> allowedCommands = new ArrayList<>();
+
+              private static int clamp(int v, int lo, int hi) {
+                  return Math.max(lo, Math.min(hi, v));
+              }
+
+              private static List<String> list(Config c, String key, String... def) {
+                  List<String> src;
+                  try {
+                      src = c.exists(key) ? c.getStringList(key) : Arrays.asList(def);
+                  } catch (Throwable t) {
+                      src = Arrays.asList(def);
+                  }
+                  List<String> out = new ArrayList<>();
+                  for (String s : src) {
+                      if (s != null && !s.trim().isEmpty()) {
+                          out.add(s.trim().toLowerCase(Locale.ROOT));
+                      }
+                  }
+                  return out;
+              }
+
+              public void load(Config c) {
+                  lobbyWait = clamp(c.getInt("lobby-wait-seconds", 70), 10, 3600);
+                  countdown = clamp(c.getInt("countdown-seconds", 12), 3, 60);
+                  matchTime = clamp(c.getInt("match-time-seconds", 600), 30, 7200);
+                  maxTeam = clamp(c.getInt("max-team-size", 5), 2, 5);
+                  radius = clamp(c.getInt("border.radius", 20), 5, 200);
+                  up = clamp(c.getInt("border.up", 15), 3, 200);
+                  down = clamp(c.getInt("border.down", 30), 3, 200);
+                  tpBackExcess = clamp(c.getInt("border.teleport-back-excess", 10), 2, 100);
+                  buildHeight = clamp(c.getInt("build.max-height", 10), 1, 100);
+                  pwMin = clamp(c.getInt("password.min-length", 3), 1, 32);
+                  pwMax = clamp(c.getInt("password.max-length", 16), pwMin, 64);
+                  statsFlush = clamp(c.getInt("stats-save-seconds", 30), 5, 600);
+                  redColor = c.getString("teams.red-color", "§c");
+                  blueColor = c.getString("teams.blue-color", "§9");
+                  redName = c.getString("teams.red-name", "Красные");
+                  blueName = c.getString("teams.blue-name", "Синие");
+                  forbiddenBlocks = list(c, "build.forbidden-blocks", "tnt", "lava", "fire", "sand", "gravel", "powder", "anvil", "dragon egg");
+                  forbiddenItems = list(c, "forbidden-items", "flint", "fire charge", "tnt", "lava");
+                  interactBlocks = list(c, "blocked-interact-blocks", "chest", "furnace", "barrel", "hopper", "dropper", "dispenser",
+                          "shulker", "anvil", "enchant", "brewing", "beacon", "smoker", "blast", "loom", "grindstone");
+                  allowedCommands = list(c, "allowed-commands", "duel");
+              }
+          }
+          EOF_DUEL_14
+          cat > src/main/java/ru/eclips/duel/StatsStore.java <<'EOF_DUEL_15'
+          package ru.eclips.duel;
+
+          import cn.nukkit.utils.Config;
+          import cn.nukkit.utils.ConfigSection;
+
+          import java.io.File;
+          import java.util.ArrayList;
+          import java.util.Collections;
+          import java.util.List;
+          import java.util.Locale;
+          import java.util.UUID;
+
+          /** Статистика игроков (stats.yml). Запись на диск асинхронная и пачками. */
+          public final class StatsStore {
+              public static final class Row {
+                  public String name = "?";
+                  public int wins;
+                  public int losses;
+                  public int kills;
+                  public int deaths;
+
+                  public double kd() {
+                      return kills / (double) Math.max(1, deaths);
+                  }
+
+                  public String kdText() {
+                      return String.format(Locale.US, "%.2f", kd());
+                  }
+              }
+
+              private final Config cfg;
+              private boolean dirty;
+
+              public StatsStore(File file) {
+                  cfg = new Config(file, Config.YAML);
+              }
+
+              private static String base(UUID id) {
+                  return "players.u_" + id;
+              }
+
+              public synchronized void add(UUID id, String name, String field, int delta) {
+                  try {
+                      String b = base(id);
+                      cfg.set(b + ".name", name);
+                      cfg.set(b + "." + field, cfg.getInt(b + "." + field, 0) + delta);
+                      dirty = true;
+                  } catch (Throwable ignored) {
+                  }
+              }
+
+              public synchronized Row get(UUID id) {
+                  Row r = new Row();
+                  try {
+                      String b = base(id);
+                      r.name = cfg.getString(b + ".name", "?");
+                      r.wins = cfg.getInt(b + ".wins", 0);
+                      r.losses = cfg.getInt(b + ".losses", 0);
+                      r.kills = cfg.getInt(b + ".kills", 0);
+                      r.deaths = cfg.getInt(b + ".deaths", 0);
+                  } catch (Throwable ignored) {
+                  }
+                  return r;
+              }
+
+              public synchronized List<Row> top(int n) {
+                  List<Row> rows = new ArrayList<>();
+                  try {
+                      ConfigSection sec = cfg.getSection("players");
+                      for (String key : sec.getKeys(false)) {
+                          String b = "players." + key;
+                          Row r = new Row();
+                          r.name = cfg.getString(b + ".name", "?");
+                          r.wins = cfg.getInt(b + ".wins", 0);
+                          r.losses = cfg.getInt(b + ".losses", 0);
+                          r.kills = cfg.getInt(b + ".kills", 0);
+                          r.deaths = cfg.getInt(b + ".deaths", 0);
+                          if (r.wins > 0) {
+                              rows.add(r);
+                          }
+                      }
+                  } catch (Throwable ignored) {
+                  }
+                  Collections.sort(rows, (a, b) -> {
+                      if (a.wins != b.wins) {
+                          return Integer.compare(b.wins, a.wins);
+                      }
+                      return Double.compare(b.kd(), a.kd());
+                  });
+                  return rows.size() > n ? new ArrayList<>(rows.subList(0, n)) : rows;
+              }
+
+              public synchronized void flush(boolean async) {
+                  if (!dirty) {
+                      return;
+                  }
+                  dirty = false;
+                  try {
+                      if (async) {
+                          if (Refl.call(cfg, "save", Boolean.TRUE) == null) {
+                              cfg.save();
+                          }
+                      } else {
+                          cfg.save();
+                      }
+                  } catch (Throwable ignored) {
+                  }
+              }
+          }
+          EOF_DUEL_15
+          cat > src/main/java/ru/eclips/duel/Util.java <<'EOF_DUEL_16'
+          package ru.eclips.duel;
+
+          import cn.nukkit.Player;
+          import cn.nukkit.block.Block;
+          import cn.nukkit.item.Item;
+          import cn.nukkit.scheduler.Task;
+
+          /** Мелкие помощники. Рискованные вызовы API идут через рефлексию (Refl). */
+          public final class Util {
+              private static final String ADV_TYPE = "cn.nukkit.AdventureSettings$Type";
+
+              private Util() {
+              }
+
+              public static Item item(String name, int legacyId) {
+                  try {
+                      Item it = Item.fromString("minecraft:" + name);
+                      if (it != null && !it.isNull()) {
+                          return it;
+                      }
+                  } catch (Throwable ignored) {
+                  }
+                  try {
+                      return Item.get(legacyId);
+                  } catch (Throwable ignored) {
+                  }
+                  return ItemCodec.air();
+              }
+
+              public static boolean isCompass(Item it) {
+                  try {
+                      return it != null && !it.isNull() && it.hasCustomName() && Msg.COMPASS_NAME.equals(it.getCustomName());
+                  } catch (Throwable t) {
+                      return false;
+                  }
+              }
+
+              public static Item getOffhand(Player p) {
+                  Object inv = Refl.call(p, "getOffhandInventory");
+                  if (inv == null) {
+                      return null;
+                  }
+                  Object it = Refl.call(inv, "getItem", 0);
+                  return it instanceof Item ? (Item) it : null;
+              }
+
+              public static void setOffhand(Player p, Item item) {
+                  Object inv = Refl.call(p, "getOffhandInventory");
+                  if (inv == null) {
+                      return;
+                  }
+                  Item it = item == null ? ItemCodec.air() : item;
+                  Refl.run(inv, "setItem", 0, it);
+              }
+
+              public static int meta(Block b) {
+                  Object o = Refl.call(b, "getDamage");
+                  return o instanceof Number ? ((Number) o).intValue() : 0;
+              }
+
+              public static Block block(int id, int meta) {
+                  Object o = Refl.callStatic("cn.nukkit.block.Block", "get", id, meta);
+                  return o instanceof Block ? (Block) o : null;
+              }
+
+              public static int num(Object o) {
+                  return o instanceof Number ? ((Number) o).intValue() : 0;
+              }
+
+              public static void setImmobile(Player p, boolean v) {
+                  Refl.run(p, "setImmobile", v);
+              }
+
+              public static void setFood(Player p, int level, float sat) {
+                  Object fd = Refl.call(p, "getFoodData");
+                  if (!Refl.run(fd, "setLevel", level, sat)) {
+                      Refl.run(fd, "setLevel", level);
+                  }
+              }
+
+              public static void heal(Player p) {
+                  try {
+                      p.setHealth(p.getMaxHealth());
+                  } catch (Throwable ignored) {
+                  }
+                  setFood(p, 20, 20f);
+                  Refl.run(p, "extinguish");
+              }
+
+              public static void clearEffects(Player p) {
+                  Refl.run(p, "removeAllEffects");
+              }
+
+              public static boolean getAllowFlight(Player p) {
+                  Object as = Refl.call(p, "getAdventureSettings");
+                  Object type = Refl.enumValue(ADV_TYPE, "ALLOW_FLIGHT");
+                  if (as == null || type == null) {
+                      return false;
+                  }
+                  return Boolean.TRUE.equals(Refl.call(as, "get", type));
+              }
+
+              public static void setFlight(Player p, boolean allow, boolean flying) {
+                  Object as = Refl.call(p, "getAdventureSettings");
+                  if (as == null) {
+                      return;
+                  }
+                  Object ta = Refl.enumValue(ADV_TYPE, "ALLOW_FLIGHT");
+                  Object tf = Refl.enumValue(ADV_TYPE, "FLYING");
+                  if (ta != null) {
+                      Refl.run(as, "set", ta, allow);
+                  }
+                  if (tf != null) {
+                      Refl.run(as, "set", tf, flying);
+                  }
+                  Refl.run(as, "update");
+              }
+
+              public static void title(Player p, String main, String sub, int in, int stay, int out) {
+                  if (!Refl.run(p, "sendTitle", main, sub, in, stay, out)) {
+                      Refl.run(p, "sendTitle", main, sub);
+                  }
+              }
+
+              public static void tip(Player p, String s) {
+                  Refl.run(p, "sendTip", s);
+              }
+
+              /** Задача планировщика, которая вызывает Runnable и не даёт ошибке уронить сервер. */
+              public static final class RunTask extends Task {
+                  private final DuelPlugin plugin;
+                  private final Runnable r;
+
+                  public RunTask(DuelPlugin plugin, Runnable r) {
+                      this.plugin = plugin;
+                      this.r = r;
+                  }
+
+                  @Override
+                  public void onRun(int currentTick) {
+                      try {
+                          r.run();
+                      } catch (Throwable t) {
+                          plugin.getLogger().warning("Duel task error: " + t);
+                      }
+                  }
+              }
+          }
+          EOF_DUEL_16
+
+      - name: Build plugin jar
+        run: |
+          ok=0
+          for v in "com.nukkit-mot nukkit-mot 1.26.50-R1" "com.nukkit-mot nukkit-mot 1.26.40-R1" "cn.nukkit Nukkit MOT-SNAPSHOT"; do
+            set -- $v
+            echo "Trying $1:$2:$3"
+            if mvn -B -ntp -Dnukkit.group="$1" -Dnukkit.artifact="$2" -Dnukkit.version="$3" clean package; then
+              ok=1
+              break
+            fi
+          done
+          if [ "$ok" != "1" ]; then
+            echo "Build failed for all Nukkit-MOT versions"
+            exit 1
+          fi
+          ls -la target/*.jar
+
+      - name: Upload Duel.jar
+        uses: actions/upload-artifact@v4
+        with:
+          name: Duel
+          path: target/Duel.jar
+          if-no-files-found: error
